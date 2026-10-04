@@ -1,0 +1,7 @@
+# Runtime (mediapipe 0.10.14 is the last line with a stable mp.solutions.pose API for this project)
+mediapipe==0.10.14
+numpy==1.26.4
+opencv-contrib-python==4.10.0.84
+
+# Tests
+pytest>=8.0
