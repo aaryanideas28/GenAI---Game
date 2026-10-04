@@ -43,8 +43,8 @@ from vision import PoseFrame, get_vertical_payload
 logger = logging.getLogger("vertical")
 
 # ---- Tunables (adjust while testing live) -----------------------------------
-JUMP_THRESHOLD: float = 0.28       # shoulders must rise this many shoulder-widths (sensitive & responsive jump)
-CROUCH_THRESHOLD: float = 0.30     # shoulders must drop this many shoulder-widths (distinct from jump dip)
+JUMP_THRESHOLD: float = 0.50       # shoulders must rise this many shoulder-widths (deliberate jump)
+CROUCH_THRESHOLD: float = 0.50     # shoulders must drop this many shoulder-widths (deliberate squat)
 REARM_BAND: float = 0.16           # must return within this of baseline to re-arm
 CROUCH_HOLD_FRAMES: int = 3        # crouch must persist 3 frames (~100ms) with downward/stable posture
 COOLDOWN_S: float = 0.5            # minimum seconds between two actions

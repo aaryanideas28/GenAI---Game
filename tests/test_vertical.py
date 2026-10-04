@@ -138,16 +138,18 @@ def test_hud_threshold_lines(h):
 
 
 def test_crouch_with_natural_forward_lean(h):
-    """When squatting or ducking, shoulders naturally lean forward (+20% width). Must still fire CROUCH."""
+    """When squatting, shoulders naturally lean forward (+20% width). Must still fire CROUCH on deliberate squat."""
     h.calibrate()
-    # Baseline is y=0.5, width=0.20. Drop to y=0.58 with forward lean width=0.24 (+20%)
-    h.feed(0.58, n=15, width=0.24)
+    # Baseline is y=0.5, width=0.20. Drop to y=0.64 with forward lean width=0.24 (+20% width, drop = 0.583 widths > 0.50)
+    h.feed(0.64, n=15, width=0.24)
     assert h.actions == ["CROUCH"]
 
 
-def test_crouch_with_modest_duck(h):
-    """Accessible ducking (0.32 widths drop) fires CROUCH smoothly."""
+def test_slight_dip_ignored_and_deliberate_squat_fires(h):
+    """Slight dip (0.32 widths) is ignored under widened 0.50 threshold; deliberate squat (0.60 widths) fires CROUCH."""
     h.calibrate()
     h.feed(0.565, n=10)
+    assert h.actions == []
+    h.feed(0.62, n=10)
     assert h.actions == ["CROUCH"]
 
