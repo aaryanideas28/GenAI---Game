@@ -103,3 +103,38 @@ def test_ramp_train_frontal_approach_clears_and_gives_surface_y():
     # Standard non-ramp train hits player standing on ground
     standard_obs = logic.ObstacleSpec(logic.KIND_TRAIN, 0, -0.3, 15.0, False, has_ramp=False)
     assert logic.overlaps(0.0, 0.0, logic.PLAYER_STAND_HEIGHT, standard_obs, LW)
+
+
+def test_runner_countdown_and_replay_lifecycle():
+    """Verify that menu start triggers countdown above player's head and replay restarts immediately without countdown."""
+    from unittest.mock import MagicMock
+    from game.runner import STATE_MENU, STATE_COUNTDOWN, STATE_PLAYING, STATE_OVER, Game
+
+    # Mock game object with methods bound
+    mock_game = MagicMock()
+    mock_game.obstacles = MagicMock()
+    mock_game.player = MagicMock()
+    mock_game.inspector = MagicMock()
+    mock_game.hud = MagicMock()
+    mock_game.cfg = {"start_speed": 12.0}
+    mock_game.has_calibrated = False
+
+    # 1. Start from menu triggers STATE_COUNTDOWN and shows "3"
+    Game.start_from_menu(mock_game)
+    assert mock_game.state == STATE_COUNTDOWN
+    assert mock_game.speed == 0.0
+    assert mock_game.hud.countdown.text == "3"
+
+    # 2. Transition from countdown to playing
+    Game.start_playing(mock_game)
+    assert mock_game.state == STATE_PLAYING
+    assert mock_game.speed == 12.0
+    assert mock_game.hud.countdown.text == ""
+
+    # 3. Crash replay immediately enters STATE_PLAYING without countdown or recalibration
+    mock_game.state = STATE_OVER
+    Game.restart_run(mock_game)
+    assert mock_game.state == STATE_PLAYING
+    assert mock_game.speed == 12.0
+    assert mock_game.hud.countdown.text == ""
+

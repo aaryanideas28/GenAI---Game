@@ -234,3 +234,4 @@ def register(bus: EventBus) -> HUDModule:
     bus.subscribe(EVENT_ACTION, _module.on_action)
     bus.subscribe(EVENT_CALIBRATED, _module.on_calibrated)
     return _module
+

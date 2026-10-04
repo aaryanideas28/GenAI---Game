@@ -30,7 +30,7 @@ SAVE_PATH = Path(__file__).with_name("save.json")
 CAMERA_OFFSET = (0, 3.4, -4.5)
 CAMERA_PITCH = 16
 
-STATE_MENU, STATE_PLAYING, STATE_PAUSED, STATE_OVER = "menu", "playing", "paused", "over"
+STATE_MENU, STATE_COUNTDOWN, STATE_PLAYING, STATE_PAUSED, STATE_OVER = "menu", "countdown", "playing", "paused", "over"
 
 
 def _load_best() -> int:
@@ -70,7 +70,10 @@ class Hud:
         self.toast = Text("", origin=(0, 0), y=0.35, scale=1.4, color=color.hex("#7dffb2"))
         self.toast_timer = 0.0
 
-        for t in (self.score, self.multiplier, self.coins, self.center, self.sub, self.toast):
+        # 3-second countdown counter centered directly above player's head (scale ~6.5 = 1/8 screen height)
+        self.countdown = Text("", origin=(0, 0), y=0.22, scale=6.5, color=color.white)
+
+        for t in (self.score, self.multiplier, self.coins, self.center, self.sub, self.toast, self.countdown):
             t.background = False
 
     def show_toast(self, msg: str, seconds: float = 2.5) -> None:
@@ -106,6 +109,7 @@ class Game(Entity):
         self.shake = 0.0
         self.prev_lane = 0
         self.state_time = 0.0
+        self.has_calibrated = False
 
         camera.position = CAMERA_OFFSET
         camera.rotation_x = CAMERA_PITCH
@@ -116,10 +120,40 @@ class Game(Entity):
     def _show_menu(self) -> None:
         self.state = STATE_MENU
         self.state_time = 0.0
+        self.hud.countdown.text = ""
         self.hud.center.text = TITLE
-        self.hud.sub.text = "SPACE / JUMP to start   ('C' to calibrate posture)\n\nArrows or WASD: move   Up: jump   Down: roll   P: pause"
+        self.hud.sub.text = "SPACE / JUMP to start   ('C' to calibrate posture)\n\nArrows or WASD: move   Up / Space: jump   Down: roll   P: pause"
+
+    def start_from_menu(self) -> None:
+        """Triggered from menu by SPACE / JUMP: starts 3s countdown with one-time posture calibration."""
+        self.obstacles.clear()
+        self.player.reset()
+        self.inspector.reset()
+        self.prev_lane = 0
+        self.speed = 0.0
+        self.distance = 0.0
+        self.coin_count = 0
+        self.state = STATE_COUNTDOWN
+        self.state_time = 0.0
+        self.hud.center.text = ""
+        self.hud.sub.text = ""
+        self.hud.countdown.text = "3"
 
     def start(self) -> None:
+        """Alias for start_from_menu."""
+        self.start_from_menu()
+
+    def start_playing(self) -> None:
+        """Transition from countdown to actual running."""
+        self.state = STATE_PLAYING
+        self.state_time = 0.0
+        self.speed = self.cfg["start_speed"]
+        self.hud.center.text = ""
+        self.hud.sub.text = ""
+        self.hud.countdown.text = ""
+
+    def restart_run(self) -> None:
+        """Replay from game-over: restarts immediately from original position without recalibration or countdown."""
         self.obstacles.clear()
         self.player.reset()
         self.inspector.reset()
@@ -131,11 +165,7 @@ class Game(Entity):
         self.state_time = 0.0
         self.hud.center.text = ""
         self.hud.sub.text = ""
-        try:
-            import controller
-            controller.trigger_calibration()
-        except Exception:
-            pass
+        self.hud.countdown.text = ""
 
     def game_over(self) -> None:
         self.state = STATE_OVER
@@ -147,16 +177,18 @@ class Game(Entity):
         if score > self.best:
             self.best = score
             _save_best(score)
+        self.hud.countdown.text = ""
         self.hud.center.text = "CRASHED!"
-        self.hud.sub.text = f"Score {score}    Coins {self.coin_count}    Best {self.best}\n\nR / JUMP to run again"
+        self.hud.sub.text = f"Score {score}    Coins {self.coin_count}    Best {self.best}\n\nSPACE / JUMP to run again"
 
     def toggle_pause(self) -> None:
-        if self.state == STATE_PLAYING:
+        if self.state in (STATE_PLAYING, STATE_COUNTDOWN):
+            self._prev_state = self.state
             self.state = STATE_PAUSED
             self.hud.center.text = "PAUSED"
             self.hud.sub.text = "P to continue"
         elif self.state == STATE_PAUSED:
-            self.state = STATE_PLAYING
+            self.state = getattr(self, "_prev_state", STATE_PLAYING)
             self.hud.center.text = ""
             self.hud.sub.text = ""
 
@@ -178,8 +210,10 @@ class Game(Entity):
     def cmd_jump(self) -> None:
         if self.state == STATE_PLAYING:
             self.player.jump()
-        elif self.state == STATE_MENU or (self.state == STATE_OVER and self.state_time > 1.0):
-            self.start()
+        elif self.state == STATE_MENU:
+            self.start_from_menu()
+        elif self.state == STATE_OVER and self.state_time > 0.8:
+            self.restart_run()
 
     def cmd_roll(self) -> None:
         if self.state == STATE_PLAYING:
@@ -196,8 +230,8 @@ class Game(Entity):
             self.cmd_roll()
         elif key == "p":
             self.toggle_pause()
-        elif key == "r" and self.state == STATE_OVER:
-            self.start()
+        elif key in ("space", "r") and self.state == STATE_OVER and self.state_time > 0.8:
+            self.restart_run()
         elif key == "c":
             try:
                 import controller
@@ -214,10 +248,10 @@ class Game(Entity):
 
             if self.state == STATE_MENU:
                 if (kind == commands.ACTION and value == "JUMP") or (kind == commands.LANE):
-                    self.start()
+                    self.start_from_menu()
             elif self.state == STATE_OVER:
-                if kind == commands.ACTION and value == "JUMP":
-                    self.start()
+                if kind == commands.ACTION and value == "JUMP" and self.state_time > 0.8:
+                    self.restart_run()
             elif self.state == STATE_PLAYING:
                 if kind == commands.LANE and value in logic.LANE_BY_NAME:
                     self.cmd_set_lane(logic.LANE_BY_NAME[value])
@@ -264,6 +298,30 @@ class Game(Entity):
             self.player.tick(dt, self.speed, support_y)
             self.inspector.tick(dt, self.speed, True)
             self._collide()
+        elif self.state == STATE_COUNTDOWN:
+            self.world.tick(dt, 0.0)
+            self.player.tick(dt, 0.0, 0.0)
+            self.inspector.tick(dt, 0.0, False)
+
+            # Posture calibration triggers ONLY ONCE during countdown (at 1.0s) while player stands on ground
+            if not self.has_calibrated and self.state_time >= 1.0:
+                self.has_calibrated = True
+                try:
+                    import controller
+                    controller.trigger_calibration()
+                except Exception:
+                    pass
+
+            if self.state_time < 1.0:
+                self.hud.countdown.text = "3"
+            elif self.state_time < 2.0:
+                self.hud.countdown.text = "2"
+            elif self.state_time < 3.0:
+                self.hud.countdown.text = "1"
+            elif self.state_time < 3.8:
+                self.hud.countdown.text = "START!"
+            else:
+                self.start_playing()
         elif self.state == STATE_MENU:
             self.world.tick(dt, 6.0)
             self.player.tick(dt, 6.0, 0.0)

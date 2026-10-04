@@ -89,17 +89,27 @@ def run_vision_loop(camera_index: int = 0, headless: bool = True,
             pass
 
     # Register teammate modules
+    h_tracker = None
     try:
         import horizontal
-        horizontal.register(bus)
+        h_tracker = horizontal.register(bus)
     except Exception as exc:
         logger.warning("Could not register horizontal tracker: %s", exc)
 
+    v_module = None
     try:
         import vertical
         vertical.register(bus)
+        v_module = getattr(vertical, "_module", None)
     except Exception as exc:
         logger.warning("Could not register vertical tracker: %s", exc)
+
+    hud_module = None
+    try:
+        import hud
+        hud_module = hud.register(bus)
+    except Exception as exc:
+        logger.warning("Could not register hud module: %s", exc)
 
     register(bus)
 
@@ -137,45 +147,29 @@ def run_vision_loop(camera_index: int = 0, headless: bool = True,
 
             if not headless and pf.frame is not None:
                 import cv2
-                lines = overlay_lines_fn() if overlay_lines_fn else []
+                extra_lines = []
                 # Add real-time posture indicators to overlay
                 try:
-                    import vertical as v_mod
-                    if getattr(v_mod, "_module", None) and v_mod._module.calibrated:
-                        det = v_mod._module.detector
-                        lines.append(f"POSTURE: rel={det.y_rel:+.2f} (CROUCH > {v_mod.CROUCH_THRESHOLD})")
-                        lines.append(f"DEPTH: {'OK' if det.depth_ok else 'TOO CLOSE / FAR'}")
+                    if v_module and v_module.calibrated:
+                        det = v_module.detector
+                        extra_lines.append(f"POSTURE: rel={det.y_rel:+.2f} (CROUCH > 0.50)")
+                        extra_lines.append(f"DEPTH: {'OK' if det.depth_ok else 'TOO CLOSE / FAR'}")
                 except Exception:
                     pass
 
-                debug_img = pipeline.draw_debug(pf.frame, pf, lines)
+                # Draw skeleton without default status text
+                debug_img = pipeline.draw_debug(pf.frame, pf, show_status=False)
 
-                # Draw horizontal guideline thresholds on camera feed
-                try:
-                    import vertical as v_mod
-                    if getattr(v_mod, "_module", None) and v_mod._module.calibrated:
-                        h_img, w_img = debug_img.shape[:2]
-                        m = v_mod._module
-                        y_jump = int(round(m.jump_line_y() * h_img))
-                        y_base = int(round(m.baseline_y * h_img))
-                        y_crouch = int(round(m.crouch_line_y() * h_img))
-
-                        # Jump threshold line (yellow)
-                        cv2.line(debug_img, (0, y_jump), (w_img, y_jump), (0, 255, 255), 1, cv2.LINE_AA)
-                        cv2.putText(debug_img, "JUMP", (w_img - 70, max(15, y_jump - 4)),
-                                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 255), 1, cv2.LINE_AA)
-
-                        # Standing baseline (cyan)
-                        cv2.line(debug_img, (0, y_base), (w_img, y_base), (255, 255, 0), 1, cv2.LINE_AA)
-                        cv2.putText(debug_img, "STAND", (w_img - 80, max(15, y_base - 4)),
-                                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 0), 1, cv2.LINE_AA)
-
-                        # Crouch threshold line (orange / red)
-                        cv2.line(debug_img, (0, y_crouch), (w_img, y_crouch), (0, 140, 255), 2, cv2.LINE_AA)
-                        cv2.putText(debug_img, "CROUCH / ROLL", (w_img - 150, min(h_img - 5, y_crouch + 14)),
-                                    cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 140, 255), 1, cv2.LINE_AA)
-                except Exception:
-                    pass
+                # Render Teammate 5 HUD (thin 1px cyan lane boundary dividers, 1px threshold lines & status panel)
+                if hud_module is not None:
+                    debug_img = hud_module.render(
+                        debug_img,
+                        pose_frame=pf,
+                        horizontal_tracker=h_tracker,
+                        vertical_module=v_module,
+                        fps=pipeline.get_fps(),
+                        extra_lines=extra_lines,
+                    )
 
                 cv2.imshow("Subway Surfers - Gesture Cam", debug_img)
                 key = cv2.waitKey(1) & 0xFF
