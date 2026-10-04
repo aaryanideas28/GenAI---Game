@@ -1,0 +1,29 @@
+{
+  "start_speed": 15.0,
+  "max_speed": 34.0,
+  "speed_increase_per_second": 0.22,
+  "gravity": 55.0,
+  "jump_velocity": 17.0,
+  "roll_duration": 0.7,
+  "lane_switch_speed": 14.0,
+  "lane_width": 2.13,
+  "spawn_gap_min": 16.0,
+  "spawn_gap_max": 26.0,
+  "coin_chance": 0.65,
+  "moving_train_chance": 0.25,
+  "moving_train_extra_speed": 8.0,
+  "score_per_meter": 1.0,
+  "sky_top_color": "#4aa8ff",
+  "sky_bottom_color": "#cdeeff",
+  "train_colors": ["#2f6fd6", "#d64545", "#3aa356", "#e0a020"],
+  "building_colors": ["#b5653a", "#d9c7a3", "#8a8f99", "#c98f5a"],
+  "coin_color": "#ffcc1a",
+  "player": {
+    "hoodie": "#ffffff",
+    "pants": "#2b4e8c",
+    "cap": "#265bb5",
+    "skin": "#e8b48a",
+    "shoes": "#e8ebf2",
+    "backpack": "#c72828"
+  }
+}

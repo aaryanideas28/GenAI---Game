@@ -43,15 +43,16 @@ from vision import PoseFrame, get_vertical_payload
 logger = logging.getLogger("vertical")
 
 # ---- Tunables (adjust while testing live) -----------------------------------
-JUMP_THRESHOLD: float = 0.35       # shoulders must rise this many shoulder-widths
-CROUCH_THRESHOLD: float = 0.45     # shoulders must drop this many shoulder-widths
-REARM_BAND: float = 0.15           # must return within this of baseline to re-arm
-CROUCH_HOLD_FRAMES: int = 3        # crouch must persist this many frames (noise filter)
-COOLDOWN_S: float = 0.6            # minimum seconds between two actions
-SMOOTH_ALPHA: float = 0.5          # EMA smoothing (1.0 = none)
-DEPTH_TOLERANCE: float = 0.15      # +-15% shoulder width = stepped closer/farther
+JUMP_THRESHOLD: float = 0.28       # shoulders must rise this many shoulder-widths (sensitive & responsive jump)
+CROUCH_THRESHOLD: float = 0.30     # shoulders must drop this many shoulder-widths (distinct from jump dip)
+REARM_BAND: float = 0.16           # must return within this of baseline to re-arm
+CROUCH_HOLD_FRAMES: int = 3        # crouch must persist 3 frames (~100ms) with downward/stable posture
+COOLDOWN_S: float = 0.5            # minimum seconds between two actions
+SMOOTH_ALPHA: float = 0.65         # EMA smoothing (1.0 = none)
+DEPTH_TOLERANCE: float = 0.35      # max width ratio increase for stepping closer
 CALIBRATION_FRAMES: int = 15       # valid frames averaged on 'c' (~0.5 s at 30 FPS)
 MAX_CALIBRATION_GAP_S: float = 3.0  # abort calibration if no valid pose for this long
+DRIFT_ALPHA: float = 0.015         # slow neutral baseline tracking to prevent drift lockout
 
 
 class VerticalDetector:
@@ -67,6 +68,7 @@ class VerticalDetector:
         self._crouch_frames: int = 0
         self._armed: bool = True
         self._last_action_t: float = float("-inf")
+        self._prev_y: float | None = None
 
     # -- calibration ---------------------------------------------------------
     def set_baseline(self, y: float, width: float) -> None:
@@ -75,11 +77,13 @@ class VerticalDetector:
         self._smooth = 0.0
         self._crouch_frames = 0
         self._armed = True
+        self._prev_y = None
 
     def reset(self) -> None:
         """Forget calibration (called when 'c' is pressed so no action fires mid-calibration)."""
         self.calibrated = False
         self._crouch_frames = 0
+        self._prev_y = None
 
     # -- per frame -----------------------------------------------------------
     def cooldown_remaining(self, now: float) -> float:
@@ -89,30 +93,49 @@ class VerticalDetector:
         """Return "JUMP", "CROUCH" or None for this frame."""
         if not self.calibrated or not payload.get("pose_detected"):
             self._crouch_frames = 0
+            self._prev_y = None
             return None
         y, width = payload.get("mid_shoulder_y"), payload.get("shoulder_width")
         if y is None or not width or width < 1e-3:
             self._crouch_frames = 0
+            self._prev_y = None
             return None
         now = payload["timestamp"]
 
-        # Depth guard: wider shoulders = closer to camera, not a real squat/jump.
-        self.depth_ok = abs(width / self.baseline_width - 1.0) <= DEPTH_TOLERANCE
+        # Vertical velocity: positive = moving down, negative = moving up
+        dy = (y - self._prev_y) if self._prev_y is not None else 0.0
+        self._prev_y = y
 
-        # Offset in units of the CURRENT shoulder width, smoothed.
+        # Stepping significantly closer to camera expands apparent shoulder width.
+        # When ratio > 1.35 (e.g. +50% in test_stepping_closer_is_not_a_crouch), suppress crouch.
+        ratio = width / self.baseline_width if self.baseline_width else 1.0
+        self.depth_ok = (ratio <= 1.0 + DEPTH_TOLERANCE)
+
+        # Distance-invariant vertical offset in units of current shoulder width, smoothed.
         raw = (y - self.baseline_y) / width
         self._smooth = SMOOTH_ALPHA * raw + (1.0 - SMOOTH_ALPHA) * self._smooth
         self.y_rel = rel = self._smooth
 
-        if abs(rel) < REARM_BAND:  # back near neutral -> ready for the next gesture
+        # Adaptive baseline: gently track standing height while in neutral posture (|raw| < 0.18).
+        # This prevents player posture drift or standing up after launch from causing lockouts.
+        if abs(raw) < 0.18 and self.depth_ok:
+            self.baseline_y = (1.0 - DRIFT_ALPHA) * self.baseline_y + DRIFT_ALPHA * y
+            if self.baseline_width:
+                self.baseline_width = (1.0 - DRIFT_ALPHA) * self.baseline_width + DRIFT_ALPHA * width
+
+        # Re-arm when returning near neutral posture
+        if abs(rel) < REARM_BAND:
             self._armed = True
             self._crouch_frames = 0
 
-        if not self.depth_ok:
+        # Crouch hold tracking:
+        # Crucial: if player is moving UPWARD (dy < -0.004), they are pushing off into a JUMP
+        # or standing back up. Moving upward immediately cancels crouch accumulation!
+        is_moving_up = (dy < -0.004)
+        if rel > CROUCH_THRESHOLD and self.depth_ok and not is_moving_up:
+            self._crouch_frames += 1
+        else:
             self._crouch_frames = 0
-            return None
-
-        self._crouch_frames = self._crouch_frames + 1 if rel > CROUCH_THRESHOLD else 0
 
         if not self._armed or self.cooldown_remaining(now) > 0.0:
             return None
@@ -126,6 +149,7 @@ class VerticalDetector:
         if action:
             self._armed = False
             self._last_action_t = now
+            self._crouch_frames = 0
         return action
 
 

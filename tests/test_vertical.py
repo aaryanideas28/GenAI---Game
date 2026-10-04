@@ -135,3 +135,19 @@ def test_hud_threshold_lines(h):
     h.calibrate()
     m = vertical._module
     assert m.jump_line_y() < m.baseline_y < m.crouch_line_y()
+
+
+def test_crouch_with_natural_forward_lean(h):
+    """When squatting or ducking, shoulders naturally lean forward (+20% width). Must still fire CROUCH."""
+    h.calibrate()
+    # Baseline is y=0.5, width=0.20. Drop to y=0.58 with forward lean width=0.24 (+20%)
+    h.feed(0.58, n=15, width=0.24)
+    assert h.actions == ["CROUCH"]
+
+
+def test_crouch_with_modest_duck(h):
+    """Accessible ducking (0.32 widths drop) fires CROUCH smoothly."""
+    h.calibrate()
+    h.feed(0.565, n=10)
+    assert h.actions == ["CROUCH"]
+

@@ -3,5 +3,9 @@ mediapipe==0.10.14
 numpy==1.26.4
 opencv-contrib-python==4.10.0.84
 
+# Game (Teammate 4: 3D endless runner, run with `python run_game.py`)
+ursina==7.0.0
+pillow>=10.0
+
 # Tests
 pytest>=8.0
