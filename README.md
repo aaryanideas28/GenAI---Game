@@ -1,124 +1,154 @@
-# Motion-Controlled Endless Runner - Vision Pipeline
+# Subway Surfers 3D - OpenCV Motion-Controlled Runner
 
-**Teammate 1 (Lead Integrator & Vision Pipeline)**  
-Foundation module for webcam capture, MediaPipe Pose tracking, coordinate normalization, and decoupled pub-sub event distribution.
+A full 3D **Subway Surfers** clone built with **Python**, **Ursina Engine**, and **MediaPipe / OpenCV** real-time computer vision motion tracking. Control Jake with your body movements via webcam (lean to switch lanes, jump to leap over barriers, crouch/squat to roll under obstacles) or with classic keyboard controls!
 
 ---
 
-## 1. Quick Start & Installation
+## 🎮 Features
+
+### 3D Game Engine (Ursina)
+- **Authentic Jake Model**: Custom 3D mesh with animated running bounces, athletic forward sprint lean, articulated leg swings, and smooth rolling barrel animations.
+- **Dynamic Subway Environment**: Continuous wrapping tracks, city tunnels, and overhead wires with zero rendering seams.
+- **Ramp & Subway Trains**: Authentic silver commuter trains, container freight cars, and sloped ramp trains that allow you to climb and run along train rooftops.
+- **Obstacles & Pickups**: High barriers (roll under), low crossbuck barriers (jump over), spinning gold subway coins, and the Inspector chasing behind Jake.
+- **HUD & Audio-Visual Feedback**: Live score, coin counter, real-time gesture toasts, and responsive crash camera shakes.
+
+### Computer Vision Gesture Engine (MediaPipe + OpenCV)
+- **Horizontal Lane Classification (`horizontal.py`)**: Real-time torso tracking classifies player position into **LEFT**, **CENTER**, or **RIGHT** lanes with hysteresis filtering.
+- **Velocity-Aware Jump & Crouch Detection (`vertical.py`)**:
+  - **Countermovement Jump Protection**: Distinguishes jump wind-up knee dips from intentional crouches using vertical velocity vectors ($dy/dt$), preventing false rolls when leaping.
+  - **Natural Squat & Duck Support**: Accommodates natural forward torso leans (+35% shoulder width expansion) without falsely triggering depth guards.
+  - **Adaptive Baseline Tracking**: Smoothly tracks natural standing height changes ($|raw| < 0.18$), preventing posture drift lockouts if you launch the game sitting down and then stand up.
+  - **Instant One-Key Calibration**: Press **`C`** anytime (or start a game) to recalibrate your standing baseline instantly.
+- **Live Visual Debugger (`--cv-window`)**:
+  - Skeleton wireframe and landmark tracking.
+  - Color-coded threshold guide lines: **Yellow (JUMP)**, **Cyan (STAND BASELINE)**, and **Orange (CROUCH/ROLL)**.
+  - Real-time relative offset ($rel$) and depth status overlay.
+
+---
+
+## 🚀 Quick Start & Installation
 
 ### Requirements
-- Python 3.10+
-- Standard USB Webcam / Integrated Laptop Camera
+- **Python 3.10+** (Tested on Python 3.11)
+- Standard USB Webcam or Integrated Laptop Camera
+- Windows / macOS / Linux
 
-### Install Dependencies
+### 1. Clone & Setup Environment
 ```bash
-# Optional: create and activate virtual environment
-python -m venv .venv
-.venv\Scripts\activate       # Windows
-# source .venv/bin/activate  # macOS / Linux
+# Clone the repository
+git clone https://github.com/aaryanideas28/GenAI---Game.git
+cd GenAI---Game
 
-# Install pinned dependencies
+# Create and activate virtual environment
+python -m venv .venv
+
+# Windows:
+.venv\Scripts\activate
+# macOS / Linux:
+# source .venv/bin/activate
+
+# Install dependencies
 pip install -r requirements.txt
 ```
 
-### Run Pipeline (Live Debug GUI)
+### 2. Run the Game
 ```bash
-python main.py
-```
-*Controls*: Press **`q`** or **`ESC`** in the window to quit cleanly.
+# Run with webcam motion tracking + live gesture camera window:
+python run_game.py --cv-window
 
-### Automated Self-Test (No GUI)
-```bash
-python main.py --selftest
+# Run with motion tracking in background (headless webcam):
+python run_game.py
+
+# Run keyboard-only (webcam disabled):
+python run_game.py --no-vision
 ```
-Runs a 30-frame benchmark reporting average processing FPS and pose detection rate.
 
 ---
 
-## 2. Coordinate System & Mirroring Contract
+## 🕹️ Controls
 
-To ensure intuitive motion controls, the camera stream is **horizontally mirrored** (`cv2.flip(frame, 1)`) before MediaPipe processing.
-
-- **Origin `(0.0, 0.0)`**: Top-Left corner of the screen.
-- **X-Axis**: Increases horizontally to the **RIGHT** (`0.0` = screen left, `0.5` = center, `1.0` = screen right).
-- **Y-Axis**: Increases vertically **DOWNWARD** (`0.0` = top, `1.0` = bottom).
-- **Behavior**:
-  - Leaning your body to **your real-life left** moves your avatar/mid-shoulder dot to **screen left** (decreasing `mid_shoulder_x`).
-  - Leaning your body to **your real-life right** moves your avatar/mid-shoulder dot to **screen right** (increasing `mid_shoulder_x`).
-  - Downstream modules do **NOT** need to invert horizontal coordinates!
-
----
-
-## 3. PoseFrame Schema
-
-Every frame generates a structured `@dataclass(frozen=True)` instance:
-
-| Field | Type | Description |
+### Motion Controls (Webcam)
+| Real-Life Gesture | Game Action | Notes |
 |---|---|---|
-| `frame_width` | `int` | Width of camera frame (pixels) |
-| `frame_height` | `int` | Height of camera frame (pixels) |
-| `timestamp` | `float` | Capture timestamp (`time.time()`) |
-| `pose_detected` | `bool` | `True` if pose was detected, `False` if lost/searching |
-| `landmarks` | `list \| None` | Raw 33 MediaPipe `NormalizedLandmark` objects (`None` if lost) |
-| `nose` | `(float, float) \| None` | Normalized `(x, y)` of nose (landmark 0) |
-| `left_shoulder` | `(float, float) \| None` | Normalized `(x, y)` of left shoulder (landmark 11) |
-| `right_shoulder` | `(float, float) \| None` | Normalized `(x, y)` of right shoulder (landmark 12) |
-| `mid_shoulder` | `(float, float) \| None` | Normalized `((l_x + r_x)/2, (l_y + r_y)/2)` anchor point |
-| `mid_shoulder_px`| `(int, int) \| None` | Pixel coordinates `(x, y)` of mid_shoulder |
-| `shoulder_visibility` | `float` | `min(left_vis, right_vis)` [0.0 to 1.0] |
-| `frame` | `np.ndarray \| None` | Mirrored BGR image frame |
+| **Lean Left** | Switch to Left Lane | Move torso to your real-life left |
+| **Lean Right** | Switch to Right Lane | Move torso to your real-life right |
+| **Jump Up** | Jump / Leap | Jump into the air over low obstacles / trains |
+| **Crouch / Squat** | Roll | Duck or bend knees to roll under high barriers |
+| **Stand Straight** | Neutral Running | Running forward along current lane |
 
-Convert to plain dictionary at any time using: `pose_frame.to_dict()`
+> [!TIP]
+> **Posture Calibration**: Press **`C`** on your keyboard at any time while standing in your natural playing stance to recalibrate your baseline height!
 
----
-
-## 4. How Teammates Subscribe (5-Line Example)
-
-Other modules (horizontal lean, jump detection, game engine) subscribe to the event bus without touching camera or OpenCV code:
-
-```python
-from event_bus import EventBus, EVENT_POSE_FRAME
-from vision import PoseFrame
-
-def on_move(frame: PoseFrame):
-    if frame.pose_detected and frame.mid_shoulder:
-        print(f"Player X: {frame.mid_shoulder[0]:.2f}")
-
-bus = EventBus()
-bus.subscribe(EVENT_POSE_FRAME, on_move)
-```
-
-### Event Names
-- `EVENT_POSE_FRAME` (`"pose_frame"`): Dispatched every frame with current `PoseFrame`.
-- `EVENT_POSE_LOST` (`"pose_lost"`): Dispatched once when player exits frame / tracking is lost.
-- `EVENT_POSE_FOUND` (`"pose_found"`): Dispatched once when player re-enters frame.
+### Keyboard Controls (Fallback & Debug)
+| Key | Action |
+|---|---|
+| **`A` / `Left Arrow`** | Move Left |
+| **`D` / `Right Arrow`** | Move Right |
+| **`W` / `Up Arrow` / `Space`** | Jump / Start Game |
+| **`S` / `Down Arrow`** | Roll / Dive Down |
+| **`P`** | Pause / Resume |
+| **`C`** | Calibrate Posture Baseline |
+| **`R`** | Restart after Crash |
 
 ---
 
-## 5. Teammate Hand-off Guides
+## 🛠️ CLI Options
 
-### Teammate 2 (Horizontal Movement)
-Use helper `get_horizontal_payload(pose_frame)`:
-```python
-from vision import get_horizontal_payload
+```text
+usage: run_game.py [-h] [--seed SEED] [--windowed] [--cv-window] [--no-vision] [--camera CAMERA]
 
-payload = get_horizontal_payload(pose_frame)
-# Returns: {"pose_detected": bool, "mid_shoulder_x": float | None, "mid_shoulder_y": float | None, ...}
-
-if payload["pose_detected"]:
-    x = payload["mid_shoulder_x"]
-    if x < 0.42:
-        lane = "LEFT"
-    elif x > 0.58:
-        lane = "RIGHT"
-    else:
-        lane = "CENTER"
+Options:
+  --cv-window    Open OpenCV debug window showing skeleton & gesture threshold lines
+  --no-vision    Disable webcam pipeline (play purely with keyboard)
+  --windowed     Run game in a window instead of borderless fullscreen
+  --camera INT   Select camera device index (default: 0)
+  --seed INT     Fixed procedural obstacle RNG seed
 ```
 
-### Teammate 3 (Jump Detection)
-Use `pose_frame.landmarks` with constants exported in `vision.py`:
-- `LEFT_HIP` (`23`), `RIGHT_HIP` (`24`)
-- `LEFT_KNEE` (`25`), `RIGHT_KNEE` (`26`)
-- `LEFT_ANKLE` (`27`), `RIGHT_ANKLE` (`28`)
-- Compare vertical coordinates (`landmark.y`) against calibrated standing baselines.
+---
+
+## 🧪 Testing & Verification
+
+The project includes an extensive test suite verifying coordinate transforms, gesture thresholds, depth guards, and game logic:
+
+```bash
+# Run all unit tests
+python -m pytest tests/
+```
+
+### Test Coverage Highlights:
+- `test_vision.py`: Camera mirroring, landmark schemas, FPS benchmarking.
+- `test_horizontal.py`: Lane boundaries, hysteresis bands, center calibration.
+- `test_vertical.py`: Jump thresholds, countermovement dips, crouch hold frames, natural forward lean tolerance, and distance invariance.
+- `test_controller.py`: Event bus dispatch and command queue routing.
+- `test_game_logic.py`: Lane math, obstacle collisions, ramp surface climbing.
+
+---
+
+## 📂 Architecture Overview
+
+```
+GenAI---Game/
+├── run_game.py          # Unified entry point (Ursina game + vision thread)
+├── main.py              # Standalone OpenCV vision pipeline runner
+├── event_bus.py         # Decoupled pub-sub event distribution
+├── vision.py            # MediaPipe Pose capture & coordinate mirroring
+├── horizontal.py        # Teammate 2: Torso X lane tracker (LEFT/CENTER/RIGHT)
+├── vertical.py          # Teammate 3: Velocity-aware JUMP & CROUCH detector
+├── controller.py        # Teammate 4: Bridge between OpenCV events and Ursina
+├── game/                # 3D Ursina Game Implementation
+│   ├── runner.py        # Main Ursina Game loop, state machine & HUD
+│   ├── player.py        # 3D Jake model, animations, physics & collision
+│   ├── world.py         # Track generation, wrapping chunks & tunnels
+│   ├── obstacles.py     # 3D Trains, ramps, barriers, coins & inspector
+│   ├── logic.py         # Pure math, lanes, AABB bounding boxes & ramp profiles
+│   ├── textures.py      # Procedural & custom textures
+│   └── commands.py      # Thread-safe gesture command queue
+└── tests/               # Comprehensive unit test suite (53 tests)
+```
+
+---
+
+## 📜 License
+MIT License. Built for educational and interactive gaming purposes.
