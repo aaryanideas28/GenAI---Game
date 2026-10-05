@@ -23,6 +23,7 @@ from game.obstacles import ObstacleManager
 from game.player import Player
 from game.world import World
 from game.llm_synthesizer import LLMGameLogicSynthesizer, LogicRuleExecutor, BehavioralLogicPackage
+from game.prompt_ui import PromptUI
 
 
 logger = logging.getLogger("game")
@@ -32,7 +33,7 @@ SAVE_PATH = Path(__file__).with_name("save.json")
 CAMERA_OFFSET = (0, 3.4, -4.5)
 CAMERA_PITCH = 16
 
-STATE_MENU, STATE_COUNTDOWN, STATE_PLAYING, STATE_PAUSED, STATE_OVER = "menu", "countdown", "playing", "paused", "over"
+STATE_PROMPT, STATE_MENU, STATE_COUNTDOWN, STATE_PLAYING, STATE_PAUSED, STATE_OVER = "prompt", "menu", "countdown", "playing", "paused", "over"
 
 
 def _load_best() -> int:
@@ -115,7 +116,7 @@ class Game(Entity):
         }
 
         self.best = _load_best()
-        self.state = STATE_MENU
+        self.state = STATE_PROMPT
         self.speed = 0.0
         self.distance = 0.0
         self.coin_count = 0
@@ -124,13 +125,12 @@ class Game(Entity):
         self.state_time = 0.0
         self.has_calibrated = False
 
-        if llm_prompt:
-            self.apply_llm_prompt(llm_prompt)
-
         camera.position = CAMERA_OFFSET
         camera.rotation_x = CAMERA_PITCH
         camera.fov = 70
-        self._show_menu()
+
+        self.prompt_ui = PromptUI(self, on_start=self._on_prompt_start)
+        self.show_prompt_ui(default_prompt=llm_prompt)
 
     def activate_powerup(self, kind: str) -> None:
         """Triggers dynamic Subway Surfers Power-Up item (Jetpack, Magnet, Super Sneakers, 2X Multiplier, Hoverboard)."""
@@ -162,7 +162,10 @@ class Game(Entity):
         """Synthesizes dynamic gameplay rules via LLM Game Logic Synthesizer and applies them."""
         package = self.synthesizer.synthesize(prompt)
         self.rule_executor.set_package(package)
-        self.hud.show_toast(f"AI Mode Loaded: {package.title}", 3.0)
+        if package.title == "Prompt Blocked":
+            self.hud.show_toast(f"Guardrail: {package.summary}", 3.5)
+        else:
+            self.hud.show_toast(f"AI Mode Loaded: {package.title}", 3.0)
         return package
 
 
@@ -170,22 +173,47 @@ class Game(Entity):
         self.inverted_controls = inverted
 
     def apply_score_penalty(self, amount: int) -> None:
-        self.bonus_score -= amount
+        from game.guardrails import SafetyClamps
+        self.bonus_score -= SafetyClamps.clamp_score_penalty(amount)
 
     def add_bonus_score(self, amount: int) -> None:
-        self.bonus_score += amount
+        from game.guardrails import SafetyClamps
+        self.bonus_score += SafetyClamps.clamp_bonus_score(amount)
+
+    add_score = add_bonus_score
+    add_points = add_bonus_score
+    deduct_score = apply_score_penalty
 
 
     # --- states --------------------------------------------------------------
+    def show_prompt_ui(self, default_prompt: str | None = None) -> None:
+        """Displays the start prompt configuration dialog."""
+        self.state = STATE_PROMPT
+        self.state_time = 0.0
+        self.hud.center.text = ""
+        self.hud.sub.text = ""
+        self.hud.countdown.text = ""
+        if not hasattr(self, "prompt_ui") or self.prompt_ui is None:
+            self.prompt_ui = PromptUI(self, on_start=self._on_prompt_start)
+        self.prompt_ui.show(default_prompt=default_prompt)
+
+    def _on_prompt_start(self, prompt: str) -> None:
+        """Called when user submits prompt or clicks start from prompt UI."""
+        if prompt:
+            self.apply_llm_prompt(prompt)
+        self.start_from_menu()
+
     def _show_menu(self) -> None:
         self.state = STATE_MENU
         self.state_time = 0.0
         self.hud.countdown.text = ""
         self.hud.center.text = TITLE
-        self.hud.sub.text = "SPACE / JUMP to start   ('C' to calibrate posture)\n\nArrows or WASD: move   Up / Space: jump   Down: roll   P: pause"
+        self.hud.sub.text = "SPACE / JUMP to start   ('C' to calibrate posture)\n\nArrows or WASD: move   Up / Space: jump   Down: roll\nTAB: Change AI Prompt"
 
     def start_from_menu(self) -> None:
         """Triggered from menu by SPACE / JUMP: starts 3s countdown with one-time posture calibration."""
+        if hasattr(self.world, "reset"):
+            self.world.reset()
         self.obstacles.clear()
         self.player.reset()
         self.inspector.reset()
@@ -214,6 +242,8 @@ class Game(Entity):
 
     def restart_run(self) -> None:
         """Replay from game-over: restarts immediately from original position without recalibration or countdown."""
+        if hasattr(self.world, "reset"):
+            self.world.reset()
         self.obstacles.clear()
         self.player.reset()
         self.inspector.reset()
@@ -247,7 +277,7 @@ class Game(Entity):
             _save_best(score)
         self.hud.countdown.text = ""
         self.hud.center.text = "CRASHED!"
-        self.hud.sub.text = f"Score {score}    Coins {self.coin_count}    Best {self.best}\n\nSPACE / JUMP to run again"
+        self.hud.sub.text = f"Score {score}    Coins {self.coin_count}    Best {self.best}\n\nSPACE / JUMP to run again    (TAB: Prompt)"
 
     def toggle_pause(self) -> None:
         if self.state in (STATE_PLAYING, STATE_COUNTDOWN):
@@ -297,9 +327,21 @@ class Game(Entity):
 
 
     def input(self, key: str) -> None:
+        if self.state == STATE_PROMPT:
+            if hasattr(self, "prompt_ui") and self.prompt_ui and self.prompt_ui.is_active:
+                self.prompt_ui.handle_input(key)
+            return
+
         if self.state == STATE_OVER:
+            if key == "tab":
+                self.show_prompt_ui()
+                return
             if self.state_time > 0.2 and key in ("space", "r", "enter", "up arrow", "w", "a", "d", "s", "down arrow", "left arrow", "right arrow"):
                 self.restart_run()
+            return
+
+        if key == "tab" and self.state == STATE_MENU:
+            self.show_prompt_ui()
             return
 
         if key in ("left arrow", "a"):
@@ -324,6 +366,9 @@ class Game(Entity):
         for kind, value in commands.drain():
             if kind == commands.ACTION and value == "CALIBRATED":
                 self.hud.show_toast("Posture calibrated! Stand straight.", 2.0)
+                continue
+
+            if self.state == STATE_PROMPT:
                 continue
 
             if self.state == STATE_MENU:
@@ -441,7 +486,7 @@ class Game(Entity):
                 self.hud.countdown.text = "START!"
             else:
                 self.start_playing()
-        elif self.state == STATE_MENU:
+        elif self.state in (STATE_MENU, STATE_PROMPT):
             self.world.tick(dt, 6.0)
             self.player.tick(dt, 6.0, 0.0)
             self.inspector.tick(dt, 6.0, False)
@@ -493,7 +538,7 @@ class Game(Entity):
 
 
         # Check collision with blocked tunnel facade / sawhorses
-        if hasattr(self.world, "tunnels"):
+        if self.distance > 2.0 and hasattr(self.world, "tunnels"):
             for tun in self.world.tunnels:
                 if -0.8 <= tun.z <= 1.2:
                     if p.lane != getattr(tun, "tunnel_lane", 1):

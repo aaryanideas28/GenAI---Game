@@ -95,6 +95,7 @@ python run_game.py --no-vision
 | **`P`** | Pause / Resume |
 | **`C`** | Calibrate Posture Baseline |
 | **`R`** | Restart after Crash |
+| **`Tab`** | Re-open AI Prompt Modifier Dialog |
 
 ---
 
@@ -109,66 +110,80 @@ Options:
   --windowed     Run game in a window instead of borderless fullscreen
   --camera INT   Select camera device index (default: 0)
   --seed INT     Fixed procedural obstacle RNG seed
-  --llm-prompt   Pass any natural language prompt to synthesize custom game rules on top of normal game
+  --llm-prompt   Pre-fill natural language prompt to modify game rules
+```
 
 ---
 
-## 🤖 Task 1: LLM Game Logic Synthesizer Framework (For Student Innovation)
+## 🤖 GenAI Prompt System & Start UI (For Live Innovation)
 
-By default, the game runs as the **normal Subway Surfers game**. However, the codebase is structured as an **open-source playground** where junior students can enter any text prompt to dynamically innovate and test new gameplay mechanics on top of the game!
+At game launch, a **Prompt UI** dialog appears automatically before the run starts, allowing you to modify game mechanics via natural language prompts!
 
-### How Juniors / Students Can Innovate with Prompts:
+### Features of the Prompt UI:
+- **Large Typographic Input Box**: Type any custom prompt (e.g. `"make coin give 500 point"`, `"jumping emits shockwave"`, `"floor is lava"`).
+- **One-Click Presets**:
+  - `Shockwave Roll`: Rolling clears all obstacles in Jake's current lane.
+  - `Reverse Trains`: Trains reverse direction whenever Jake jumps.
+  - `Floor is Lava`: Running on the ground for more than 1.5s triggers game over.
+  - `Survival Mode`: Score constantly decays over time unless coins are collected.
+  - `Jetpack Flying`: Fly freely with jetpack and high speed.
+  - `Normal Mode`: Clears modifications for vanilla Subway Surfers play.
+- **Controls**: Press <kbd>Enter</kbd> to apply and start; press <kbd>Esc</kbd> or click "Play Vanilla" for default gameplay. Press <kbd>Tab</kbd> anytime from the menu or game over to modify prompts.
 
-Pass any text prompt using `--llm-prompt` when launching:
-
-```bash
-# Example 1: Custom Gameplay Rule
-python run_game.py --llm-prompt "every time Jake rolls emit a shockwave that clears the lane"
-
-# Example 2: Train Dynamics
-python run_game.py --llm-prompt "trains reverse direction when Jake jumps"
-
-# Example 3: Mandatory Challenge Mechanics
-python run_game.py --llm-prompt "floor is lava mode where jumping onto train roofs is mandatory"
-
-# Example 4: Survival Mode
-python run_game.py --llm-prompt "survival mode where score decays every second unless collecting coins"
+### API Key Configuration (`secure.env`):
+Add your Gemini API key to a `secure.env` file in the root folder (automatically protected by `.gitignore`):
+```ini
+GEMINI_API_KEY=your_api_key_here
 ```
+The game automatically loads `secure.env` on startup using `google-genai`. If offline or without a key, a local dynamic fallback parser handles prompts locally.
 
-### Direct Frontier LLM API Integration (Gemini / OpenAI):
-Students can supply their API key via environment variable:
-```bash
-# Windows PowerShell:
-$env:GEMINI_API_KEY="YOUR_GEMINI_API_KEY"
-python run_game.py --llm-prompt "coins spawn in zigzag formations and collecting magnet activates jetpack hover"
-```
+---
 
-### How the Framework Synthesizes Rules:
-1. **Prompt Parsing & Synthesizer (`LLMGameLogicSynthesizer`)**:
-   Sends specialized system prompts & few-shot game design contexts to Gemini API / OpenAI API.
-2. **Deliverable Package (`BehavioralLogicPackage`)**:
-   Produces executable Python condition-action lambdas, event triggers, and state dictionaries.
-3. **Live Rule Execution (`LogicRuleExecutor`)**:
-   Binds condition-action hooks to game events (`on_roll`, `on_jump`, `on_lane_change`, `on_tick`, `on_coin_collect`, `on_spawn`) seamlessly on top of the normal engine.
+## 🛡️ Task 2: Safety Guardrails System (`game/guardrails.py`)
+
+A comprehensive multi-layer safety architecture protects the game against prompt injections, code exploits, physics anomalies, and runtime crashes:
+
+1. **Prompt Injection & Adversarial Defense (`PromptGuard`)**:
+   - Blocks prompt injection phrases (`ignore previous instructions`, `system override`, `eval(`, `__import__`, etc.).
+   - Enforces length limits ($\le 250$ chars) and strips non-printable characters.
+   - Displays in-game toast notification when an invalid prompt is rejected.
+
+2. **AST Code Sandbox Validator (`ASTValidator`)**:
+   - Statically parses and inspects Python lambdas before compilation using `ast.parse`.
+   - Prevents dunder attribute leaks (`__class__`, `__subclasses__`, `__globals__`, `__dict__`).
+   - Whitelists only permitted game methods (`add_bonus_score`, `add_score`, `clear_lane`, `reverse_trains`, `attract_coins`, `show_toast`, etc.).
+
+3. **Anti-Cheat & Game Invariant Clamps (`SafetyClamps`)**:
+   - Caps score bonuses to a safe maximum ($\le 1000$ points per event).
+   - Bounds speed to $[5.0, 35.0]\text{ m/s}$ and jump velocity to $[8.0, 25.0]\text{ m/s}$.
+   - Automatically sanitizes `NaN` and `infinite` values.
+
+4. **Runtime Crash Isolation (`RuntimeGuard`)**:
+   - Wraps rule execution with error containment. If a rule throws an exception, it is caught without dropping frames.
+   - Automatically revokes malfunctioning rules if they fail 3 times consecutively.
 
 ---
 
 ## 🧪 Testing & Verification
 
-The project includes an extensive test suite verifying coordinate transforms, gesture thresholds, depth guards, game logic, and LLM rule synthesis:
+The project includes an extensive test suite verifying coordinate transforms, gesture thresholds, depth guards, game logic, world resets, prompt UI, and guardrails:
 
 ```bash
 # Run all unit tests
 python -m pytest tests/
 ```
 
-### Test Coverage Highlights:
-- `test_vision.py`: Camera mirroring, landmark schemas, FPS benchmarking.
-- `test_horizontal.py`: Lane boundaries, hysteresis bands, center calibration.
-- `test_vertical.py`: Jump thresholds, countermovement dips, crouch hold frames, natural forward lean tolerance, and distance invariance.
-- `test_controller.py`: Event bus dispatch and command queue routing.
-- `test_game_logic.py`: Lane math, obstacle collisions, ramp surface climbing.
-- `test_llm_synthesizer.py`: Direct LLM rule synthesis, condition-action lambda compilation, and dynamic event hook execution.
+### Test Coverage (85 Passing Unit Tests):
+- `test_guardrails.py` (10 tests): Prompt injection blocking, AST dunder validation, safety clamping, and runtime rule revocation.
+- `test_prompt_ui.py` (4 tests): Prompt UI layout, preset population, submission, and game start transitions.
+- `test_world_reset.py` (2 tests): Track chunk and tunnel portal position resets on restart.
+- `test_llm_synthesizer.py` (7 tests): LLM prompt synthesis, condition-action lambdas, and rule execution.
+- `test_game_logic.py` (12 tests): Lane math, obstacle collisions, ramp climbing, and roof walking.
+- `test_vertical.py` (14 tests): Jump/crouch thresholds, countermovement dips, and adaptive standing baselines.
+- `test_horizontal.py` (5 tests): Lane boundaries, hysteresis bands, and torso tracking.
+- `test_vision.py` (20 tests): MediaPipe Pose landmark normalization, mirroring, and benchmark latency.
+- `test_controller.py` (4 tests): Gesture queue event routing and dispatching.
+- `test_hud.py` (7 tests): Camera overlays, status panels, and threshold line guides.
 
 ---
 
@@ -185,14 +200,16 @@ GenAI---Game/
 ├── controller.py        # Teammate 4: Bridge between OpenCV events and Ursina
 ├── game/                # 3D Ursina Game Implementation
 │   ├── runner.py        # Main Ursina Game loop, state machine & HUD
-│   ├── llm_synthesizer.py # Task 1: LLM Game Logic Synthesizer & Rule Executor
+│   ├── prompt_ui.py     # Task 1: In-game Prompt Modifier UI dialog & presets
+│   ├── guardrails.py    # Task 2: Safety Guardrails (Prompt, AST, Clamps, Runtime)
+│   ├── llm_synthesizer.py # Task 1: Gemini LLM Game Logic Synthesizer & Rule Executor
 │   ├── player.py        # 3D Jake model, animations, physics & collision
-│   ├── world.py         # Track generation, wrapping chunks & tunnels
+│   ├── world.py         # Track generation, wrapping chunks, tunnels & resets
 │   ├── obstacles.py     # 3D Trains, ramps, barriers, coins & inspector
 │   ├── logic.py         # Pure math, lanes, AABB bounding boxes & ramp profiles
 │   ├── textures.py      # Procedural & custom textures
 │   └── commands.py      # Thread-safe gesture command queue
-└── tests/               # Comprehensive unit test suite (68 tests)
+└── tests/               # Comprehensive unit test suite (85 tests)
 ```
 
 ---

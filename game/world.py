@@ -90,3 +90,20 @@ class World:
             if t.z < -30.0:
                 t.z += 400.0
                 self._position_tunnel(t)
+
+    def reset(self) -> None:
+        """Reset track chunks and tunnel positions back to their starting layout."""
+        if hasattr(self, "chunks"):
+            if len(self.chunks) == NUM_CHUNKS:
+                for i, c in enumerate(self.chunks):
+                    c.z = MIN_WRAP_Z + i * CHUNK_LEN
+            else:
+                for c in self.chunks:
+                    c.z = 120.0
+
+        if hasattr(self, "tunnels"):
+            initial_tunnel_zs = (160.0, 360.0)
+            for i, t in enumerate(self.tunnels):
+                z_pos = initial_tunnel_zs[i % len(initial_tunnel_zs)]
+                t.z = z_pos
+                self._position_tunnel(t)

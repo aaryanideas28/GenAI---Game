@@ -6,6 +6,8 @@ opencv-contrib-python==4.10.0.84
 # Game (Teammate 4: 3D endless runner, run with `python run_game.py`)
 ursina==7.0.0
 pillow>=10.0
+google-genai>=2.0.0
+python-dotenv>=1.0.0
 
 # Tests
-pytest>=8.0
+pytest>=8.0

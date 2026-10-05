@@ -7,6 +7,9 @@
 """
 
 import sys
+from game.llm_synthesizer import load_env_file
+load_env_file()
+
 from controller import start_vision_thread, stop_vision_thread
 from game.runner import main
 

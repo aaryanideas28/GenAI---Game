@@ -22,11 +22,40 @@ import ast
 import json
 import logging
 import os
+from pathlib import Path
 import re
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Union
 
 logger = logging.getLogger("llm_synthesizer")
+
+
+def load_env_file() -> None:
+    """Automatically loads secure.env or .env from the project root if present."""
+    root = Path(__file__).resolve().parent.parent
+    for fname in ("secure.env", ".env"):
+        p = root / fname
+        if p.is_file():
+            try:
+                from dotenv import load_dotenv
+                load_dotenv(p, override=True)
+            except Exception:
+                pass
+            try:
+                for line in p.read_text(encoding="utf-8").splitlines():
+                    line = line.strip()
+                    if line and not line.startswith("#") and "=" in line:
+                        k, v = line.split("=", 1)
+                        k = k.strip().removeprefix("export ").strip()
+                        v = v.strip().strip("'\"")
+                        if k and (k not in os.environ or not os.environ[k]):
+                            os.environ[k] = v
+            except Exception:
+                pass
+
+
+# Auto-load environment keys on module import
+load_env_file()
 
 # --- System Prompts & Few-Shot Game Design Contexts ---------------------------
 
@@ -192,21 +221,28 @@ class BehavioralLogicPackage:
 # --- Expression Compiler ------------------------------------------------------
 
 def _safe_compile_lambda(expr_str: str, is_condition: bool = True) -> Callable[[Dict[str, Any]], Any]:
-    """Compiles a lambda expression string safely."""
+    """Compiles a lambda expression string safely after AST verification."""
+    from game.guardrails import ASTValidator
+
     expr_str = expr_str.strip()
     if not expr_str.startswith("lambda"):
         expr_str = f"lambda ctx: {expr_str}"
+
+    is_safe, reason = ASTValidator.validate_code(expr_str)
+    if not is_safe:
+        logger.warning("AST Guardrail rejected code %r: %s", expr_str, reason)
+        return (lambda ctx: False) if is_condition else (lambda ctx: None)
 
     # Build evaluation environment with safe builtins
     eval_globals = {
         "__builtins__": {
             "abs": abs, "min": min, "max": max, "int": int, "float": float,
             "str": str, "bool": bool, "len": len, "dict": dict, "list": list,
-            "set": set, "getattr": getattr, "setattr": setattr, "hasattr": hasattr,
+            "set": set, "getattr": getattr, "hasattr": hasattr,
             "None": None, "True": True, "False": False,
         }
     }
-    
+
     try:
         fn = eval(expr_str, eval_globals)  # noqa: S307
         return fn
@@ -223,12 +259,45 @@ class LLMGameLogicSynthesizer:
     """Direct LLM Integration engine to synthesize game rules from prompts."""
 
     def __init__(self, api_key: Optional[str] = None, provider: str = "gemini", model_name: Optional[str] = None):
-        self.api_key = api_key or os.environ.get("GEMINI_API_KEY") or os.environ.get("OPENAI_API_KEY")
-        self.provider = provider
-        self.model_name = model_name or ("gemini-2.5-flash" if provider == "gemini" else "gpt-4o")
+        is_test = "PYTEST_CURRENT_TEST" in os.environ
+        if not api_key and not is_test:
+            load_env_file()
+        gem_key = None if is_test else os.environ.get("GEMINI_API_KEY")
+        oai_key = None if is_test else os.environ.get("OPENAI_API_KEY")
+
+        if api_key:
+            self.api_key = api_key
+            self.provider = provider
+        elif gem_key:
+            self.api_key = gem_key
+            self.provider = "gemini"
+        elif oai_key:
+            self.api_key = oai_key
+            self.provider = "openai"
+        else:
+            self.api_key = None
+            self.provider = provider
+
+        self.model_name = model_name or ("gemini-2.5-flash" if self.provider == "gemini" else "gpt-4o")
 
     def synthesize(self, prompt: str, streaming_callback: Optional[Callable[[str], None]] = None) -> BehavioralLogicPackage:
         """Integrates directly with frontier LLM API (Gemini / OpenAI API) or prompt templates."""
+        from game.guardrails import PromptGuard
+
+        is_safe, sanitized_or_err = PromptGuard.validate_prompt(prompt)
+        if not is_safe:
+            logger.warning("Prompt rejected by Guardrails: %s", sanitized_or_err)
+            return BehavioralLogicPackage(
+                title="Prompt Blocked",
+                summary=sanitized_or_err,
+                mode_type="custom_rules",
+                hooks=[],
+                state={},
+                raw_prompt=prompt,
+                json_response="",
+            )
+
+        prompt = sanitized_or_err
         json_str = ""
 
         # Direct API call if API key is provided/available in env
@@ -304,6 +373,30 @@ class LLMGameLogicSynthesizer:
         """Synthesizes structured rule packages for gameplay modes based on prompt semantics."""
         prompt_lower = prompt.lower()
 
+        if "survival" in prompt_lower or "lose score" in prompt_lower or "decay" in prompt_lower:
+            return json.dumps({
+                "title": "Survival Mode",
+                "summary": "Jake loses score every second unless collecting coins",
+                "mode_type": "survival",
+                "state_init": {"coin_timer": 0.0},
+                "rules": [
+                    {
+                        "rule_id": "survival_tick_decay",
+                        "description": "Deduct score over time",
+                        "event_type": "on_tick",
+                        "condition_code": "lambda ctx: ctx['event'] == 'on_tick' and ctx['game'].state == 'playing'",
+                        "action_code": "lambda ctx: ctx['game'].apply_score_penalty(int(25 * ctx['dt']))"
+                    },
+                    {
+                        "rule_id": "survival_coin_restore",
+                        "description": "Restores score on coin pickup",
+                        "event_type": "on_coin_collect",
+                        "condition_code": "lambda ctx: ctx['event'] == 'on_coin_collect'",
+                        "action_code": "lambda ctx: (ctx['game'].add_bonus_score(60), ctx['hud'].show_toast('+60 Survival Coin!'))"
+                    }
+                ]
+            })
+
         if "lava" in prompt_lower or "floor" in prompt_lower:
             return json.dumps({
                 "title": "Floor is Lava Mode",
@@ -328,26 +421,24 @@ class LLMGameLogicSynthesizer:
                 ]
             })
 
-        if "survival" in prompt_lower or "lose score" in prompt_lower or "decay" in prompt_lower:
+        # Dynamic coin score parsing in fallback
+        if "coin" in prompt_lower and any(w in prompt_lower for w in ("point", "score", "give", "grant", "worth", "value")):
+            import re
+            m = re.search(r"(\d+)", prompt)
+            val = int(m.group(1)) if m else 500
+            bonus = max(0, val - 10)
             return json.dumps({
-                "title": "Survival Mode",
-                "summary": "Jake loses score every second unless collecting coins",
-                "mode_type": "survival",
-                "state_init": {"coin_timer": 0.0},
+                "title": f"Coin Value {val} Mode",
+                "summary": f"Collecting coins grants {val} points each",
+                "mode_type": "powerup",
+                "state_init": {},
                 "rules": [
                     {
-                        "rule_id": "survival_tick_decay",
-                        "description": "Deduct score over time",
-                        "event_type": "on_tick",
-                        "condition_code": "lambda ctx: ctx['event'] == 'on_tick' and ctx['game'].state == 'playing'",
-                        "action_code": "lambda ctx: ctx['game'].apply_score_penalty(int(25 * ctx['dt']))"
-                    },
-                    {
-                        "rule_id": "survival_coin_restore",
-                        "description": "Restores score on coin pickup",
+                        "rule_id": "custom_coin_points",
+                        "description": f"Grants {val} points on coin collect",
                         "event_type": "on_coin_collect",
                         "condition_code": "lambda ctx: ctx['event'] == 'on_coin_collect'",
-                        "action_code": "lambda ctx: (ctx['game'].add_bonus_score(60), ctx['hud'].show_toast('+60 Survival Coin!'))"
+                        "action_code": f"lambda ctx: (ctx['game'].add_bonus_score({bonus}), ctx['hud'].show_toast('+{val} Points!'))"
                     }
                 ]
             })
@@ -504,9 +595,12 @@ class LogicRuleExecutor:
     """Executes synthesized BehavioralLogicPackages on live game instances."""
 
     def __init__(self, game_ref: Any, package: Optional[BehavioralLogicPackage] = None):
+        from game.guardrails import RuntimeGuard
         self.game = game_ref
         self.package = package
         self.inverted_controls = False
+        hud_ref = getattr(game_ref, "hud", None)
+        self.runtime_guard = RuntimeGuard(hud_ref=hud_ref)
 
     def set_package(self, package: BehavioralLogicPackage) -> None:
         self.package = package
@@ -514,7 +608,7 @@ class LogicRuleExecutor:
         self.inverted_controls = False
 
     def trigger_event(self, event_name: str, dt: float = 0.0, payload: Optional[Dict[str, Any]] = None) -> None:
-        """Evaluates condition-action lambdas registered for ``event_name``."""
+        """Evaluates condition-action lambdas registered for ``event_name`` using RuntimeGuard."""
         if not self.package or not self.game:
             return
 
@@ -531,9 +625,5 @@ class LogicRuleExecutor:
         }
 
         for hook in self.package.hooks:
-            if hook.event_type == event_name and hook.condition and hook.action:
-                try:
-                    if hook.condition(ctx):
-                        hook.action(ctx)
-                except Exception as exc:  # noqa: BLE001
-                    logger.warning("Error executing rule %s on event %s: %s", hook.rule_id, event_name, exc)
+            if hook.event_type == event_name:
+                self.runtime_guard.execute_hook(hook, ctx)
