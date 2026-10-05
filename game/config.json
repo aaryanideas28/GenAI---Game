@@ -3,7 +3,7 @@
   "max_speed": 34.0,
   "speed_increase_per_second": 0.22,
   "gravity": 55.0,
-  "jump_velocity": 17.0,
+  "jump_velocity": 15.0,
   "roll_duration": 0.7,
   "lane_switch_speed": 14.0,
   "lane_width": 2.13,

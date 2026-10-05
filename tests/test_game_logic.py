@@ -105,6 +105,22 @@ def test_ramp_train_frontal_approach_clears_and_gives_surface_y():
     assert logic.overlaps(0.0, 0.0, logic.PLAYER_STAND_HEIGHT, standard_obs, LW)
 
 
+def test_standard_train_roof_walking_and_jumping():
+    # Standard non-ramp train: standing on ground hits front face
+    train_obs = logic.ObstacleSpec(logic.KIND_TRAIN, 0, -3.0, 15.0, False, has_ramp=False)
+    assert logic.overlaps(0.0, 0.0, logic.PLAYER_STAND_HEIGHT, train_obs, LW)
+
+    # Standing/walking on roof (y=2.80) does NOT crash
+    assert not logic.overlaps(0.0, 2.80, 2.80 + logic.PLAYER_STAND_HEIGHT, train_obs, LW)
+
+    # get_surface_y for player on/near roof returns 2.80
+    assert logic.get_surface_y(0.0, 2.80, LW, [train_obs]) == 2.80
+    assert logic.get_surface_y(0.0, 2.20, LW, [train_obs]) == 2.80
+
+    # Player on ground (y=0.0) under non-ramp train gets surface_y=0.0
+    assert logic.get_surface_y(0.0, 0.0, LW, [train_obs]) == 0.0
+
+
 def test_runner_countdown_and_replay_lifecycle():
     """Verify that menu start triggers countdown above player's head and replay restarts immediately without countdown."""
     from unittest.mock import MagicMock

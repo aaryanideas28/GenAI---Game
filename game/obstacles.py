@@ -158,13 +158,35 @@ class Coin(Entity):
         self.lane = spec.lane
 
 
-class LightningToken(Entity):
-    """Blue Lightning power-up token hovering above tracks."""
-    def __init__(self, lane: int, x: float, y: float, z: float) -> None:
-        super().__init__(model="sphere", color=color.hex("#1888ff"), scale=(0.6, 0.8, 0.2), position=(x, y, z))
-        # Inner glowing bolt
-        Entity(parent=self, model="quad", color=color.white, scale=(0.4, 0.6), z=-0.11)
+POWERUP_JETPACK = "jetpack"
+POWERUP_MAGNET = "magnet"
+POWERUP_SNEAKERS = "sneakers"
+POWERUP_MULTIPLIER = "multiplier"
+POWERUP_HOVERBOARD = "hoverboard"
+POWERUPS = (POWERUP_JETPACK, POWERUP_MAGNET, POWERUP_SNEAKERS, POWERUP_MULTIPLIER, POWERUP_HOVERBOARD)
+
+
+class PowerUpToken(Entity):
+    """3D Subway Surfers Power-Up Item with authentic logo textures (Jetpack, Magnet, Super Sneakers, 2X Multiplier, Hoverboard)."""
+    def __init__(self, kind: str, lane: int, cfg: dict, z: float, y: float = 1.2) -> None:
+        x = logic.lane_to_x(lane, cfg["lane_width"])
+        super().__init__(position=(x, y, z))
+        self.kind = kind
         self.lane = lane
+
+        tex_filename = f"powerup_{kind}.png"
+        tex = tx.get_custom_texture(tex_filename)
+        if tex:
+            self.model_part = Entity(parent=self, model="quad", texture=tex, scale=(1.35, 1.35),
+                                     double_sided=True, unlit=True)
+            # Glowing backing disc for 3D depth
+            Entity(parent=self.model_part, model="circle", color=color.hex("#ffe855aa"), scale=(1.2, 1.2), z=0.01)
+        else:
+            self.model_part = Entity(parent=self, model="cube", color=color.hex("#ffea00"), scale=(0.6, 0.6, 0.2))
+
+        # Pulsing glowing ring around item
+        self.ring = Entity(parent=self, model="circle", color=color.hex("#ffffffaa"), scale=(1.1, 1.1), rotation_x=90, y=-0.5)
+
 
 
 class ObstacleManager:
@@ -173,14 +195,17 @@ class ObstacleManager:
         self.rng = random.Random(seed)
         self.obstacles: list[ObstacleEntity] = []
         self.coins: list[Coin] = []
+        self.powerups: list[PowerUpToken] = []
         self.until_next = 40.0           # first row comes after a short warm-up
 
     def clear(self) -> None:
-        for e in self.obstacles + self.coins:
+        for e in self.obstacles + self.coins + self.powerups:
             destroy(e)
         self.obstacles.clear()
         self.coins.clear()
+        self.powerups.clear()
         self.until_next = 40.0
+
 
     def live_specs(self) -> list[logic.ObstacleSpec]:
         return [o.spec for o in self.obstacles]
@@ -194,6 +219,9 @@ class ObstacleManager:
         for c in self.coins:
             c.z -= speed * dt
             c.rotation_y += 220 * dt
+        for p in self.powerups:
+            p.z -= speed * dt
+            p.rotation_y += 180 * dt
 
         # Prevent any moving obstacles from intruding into the tunnel clearance zone
         if world and hasattr(world, "tunnels"):
@@ -209,6 +237,9 @@ class ObstacleManager:
         for c in [c for c in self.coins if c.z < DESPAWN_Z]:
             self.coins.remove(c)
             destroy(c)
+        for p in [p for p in self.powerups if p.z < DESPAWN_Z]:
+            self.powerups.remove(p)
+            destroy(p)
 
         self.until_next -= speed * dt
         if self.until_next <= 0:
@@ -253,4 +284,68 @@ class ObstacleManager:
                            for s in occupied):
                         continue
                     self.coins.append(Coin(cs, self.cfg))
+
+                # 20% chance to spawn a power-up token on a free lane
+                if self.rng.random() < 0.20:
+                    occ_lanes = {o.lane for o in valid_obstacles}
+                    free_lanes = [l for l in (-1, 0, 1) if l not in occ_lanes]
+                    if free_lanes:
+                        p_lane = self.rng.choice(free_lanes)
+                        p_kind = self.rng.choice(POWERUPS)
+                        self.powerups.append(PowerUpToken(p_kind, p_lane, self.cfg, z=spawn_z + 2.0))
+
                 self.until_next = logic.next_gap(self.rng, speed, self.cfg)
+
+    def spawn_sky_coins(self, start_z: float = 20.0, count: int = 16) -> None:
+        """Spawns a streak of sky coins for Jetpack mode."""
+        for i in range(count):
+            lane = (-1, 0, 1)[(i // 4) % 3]
+            cs = logic.CoinSpec(lane, start_z + i * 3.5, 5.8)
+            self.coins.append(Coin(cs, self.cfg))
+
+
+    def clear_lane(self, lane: int) -> None:
+        """Removes/destroys all obstacles in a specific lane (e.g. for Shockwave Roll)."""
+        to_remove = [o for o in self.obstacles if o.spec.lane == lane]
+        for o in to_remove:
+            self.obstacles.remove(o)
+            destroy(o)
+
+    def reverse_trains(self) -> None:
+        """Reverses the motion direction or moves train positions back (e.g. for Train Reversal)."""
+        for o in self.obstacles:
+            if o.spec.kind == logic.KIND_TRAIN:
+                o.spec.z_start += 15.0
+                o.z = o.spec.z_center
+
+    def attract_coins(self, player_x: float, player_z: float, range_dist: float = 8.0) -> None:
+        """Coin Magnet powerup: pulls coins towards player."""
+        lw = self.cfg["lane_width"]
+        for c in self.coins:
+            dx = player_x - c.x
+            dz = player_z - c.z
+            dist = (dx * dx + dz * dz) ** 0.5
+            if dist < range_dist and dist > 0.1:
+                c.x += (dx / dist) * 12.0 * 0.05
+                c.z += (dz / dist) * 12.0 * 0.05
+
+    def spawn_zigzag_coins(self, spawn_z: float) -> None:
+        """Spawns coins in an alternating zigzag pattern across lanes."""
+        lanes = [-1, 0, 1, 0, -1, 0, 1]
+        for i, lane in enumerate(lanes):
+            cs = logic.CoinSpec(lane, spawn_z + i * 3.0, 1.0)
+            self.coins.append(Coin(cs, self.cfg))
+
+    def clear_all_obstacles(self) -> None:
+        """Destroys all active obstacles on screen."""
+        for o in list(self.obstacles):
+            self.obstacles.remove(o)
+            destroy(o)
+
+    def spawn_coins_cluster(self, lane: int = 0, count: int = 10, start_z: float = 30.0) -> None:
+        """Spawns a cluster of coins in a target lane."""
+        for i in range(count):
+            cs = logic.CoinSpec(lane, start_z + i * 2.5, 1.0)
+            self.coins.append(Coin(cs, self.cfg))
+
+

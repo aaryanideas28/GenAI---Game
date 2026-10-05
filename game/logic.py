@@ -93,13 +93,15 @@ def overlaps(player_x: float, player_bottom: float, player_top: float,
     if obs.z_start >= PLAYER_HALF_DEPTH or obs.z_end <= -PLAYER_HALF_DEPTH:
         return False
 
-    # Ramp train: ascending the ramp wedge or running on the roof does not crash
-    if obs.kind == KIND_TRAIN and getattr(obs, "has_ramp", False):
-        ramp_len = max(2.0, obs.length * 0.17)
-        if obs.z_start <= PLAYER_HALF_DEPTH and obs.z_start >= -ramp_len:
+    if obs.kind == KIND_TRAIN:
+        # If player is on or landing on the train roof (bottom >= 2.4), no crash
+        if player_bottom >= 2.4:
             return False
-        if player_bottom >= 2.5:
-            return False
+        # If train has a frontal ramp and player is at the ramp section, no crash
+        if getattr(obs, "has_ramp", False):
+            ramp_len = max(2.0, obs.length * 0.17)
+            if obs.z_start <= PLAYER_HALF_DEPTH and obs.z_start >= -ramp_len:
+                return False
 
     y_bottom, y_top = OBSTACLE_Y[obs.kind]
     return player_bottom < y_top and player_top > y_bottom
@@ -124,7 +126,7 @@ def get_surface_y(player_x: float, player_y: float, lane_width: float,
                     surf_y = max(surf_y, ramp_h)
                 else:
                     surf_y = max(surf_y, 2.80)
-            elif player_y >= 2.5:
+            elif player_y >= 2.0:
                 surf_y = max(surf_y, 2.80)
     return surf_y
 

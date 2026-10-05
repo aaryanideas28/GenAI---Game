@@ -146,10 +146,11 @@ def test_crouch_with_natural_forward_lean(h):
 
 
 def test_slight_dip_ignored_and_deliberate_squat_fires(h):
-    """Slight dip (0.32 widths) is ignored under widened 0.50 threshold; deliberate squat (0.60 widths) fires CROUCH."""
+    """Slight posture wobble (0.15 widths) is ignored under responsive 0.28 threshold; deliberate squat (0.60 widths) fires CROUCH."""
     h.calibrate()
-    h.feed(0.565, n=10)
+    h.feed(0.53, n=10)
     assert h.actions == []
     h.feed(0.62, n=10)
     assert h.actions == ["CROUCH"]
+
 

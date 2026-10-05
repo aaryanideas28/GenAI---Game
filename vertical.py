@@ -43,16 +43,17 @@ from vision import PoseFrame, get_vertical_payload
 logger = logging.getLogger("vertical")
 
 # ---- Tunables (adjust while testing live) -----------------------------------
-JUMP_THRESHOLD: float = 0.50       # shoulders must rise this many shoulder-widths (deliberate jump)
-CROUCH_THRESHOLD: float = 0.50     # shoulders must drop this many shoulder-widths (deliberate squat)
+JUMP_THRESHOLD: float = 0.28       # shoulders must rise this many shoulder-widths (deliberate jump)
+CROUCH_THRESHOLD: float = 0.28     # shoulders must drop this many shoulder-widths (deliberate squat)
 REARM_BAND: float = 0.16           # must return within this of baseline to re-arm
-CROUCH_HOLD_FRAMES: int = 3        # crouch must persist 3 frames (~100ms) with downward/stable posture
-COOLDOWN_S: float = 0.5            # minimum seconds between two actions
+CROUCH_HOLD_FRAMES: int = 2        # crouch must persist 2 frames (~60ms) for responsive rolls
+COOLDOWN_S: float = 0.35           # minimum seconds between two actions
 SMOOTH_ALPHA: float = 0.65         # EMA smoothing (1.0 = none)
-DEPTH_TOLERANCE: float = 0.35      # max width ratio increase for stepping closer
+DEPTH_TOLERANCE: float = 0.45      # max width ratio increase for stepping closer
 CALIBRATION_FRAMES: int = 15       # valid frames averaged on 'c' (~0.5 s at 30 FPS)
 MAX_CALIBRATION_GAP_S: float = 3.0  # abort calibration if no valid pose for this long
 DRIFT_ALPHA: float = 0.015         # slow neutral baseline tracking to prevent drift lockout
+
 
 
 class VerticalDetector:

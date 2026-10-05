@@ -126,7 +126,63 @@ class Player(Entity):
     def top(self) -> float:
         return self.y + (logic.PLAYER_ROLL_HEIGHT if self.rolling else logic.PLAYER_STAND_HEIGHT)
 
+    def set_hoverboard_active(self, active: bool) -> None:
+        """Toggles 3D Hoverboard visual surfboard entity under player's feet."""
+        if active:
+            if getattr(self, "hoverboard_mesh", None) is None:
+                from game import textures as tx
+                hb_tex = tx.get_custom_texture("powerup_hoverboard.png")
+                if hb_tex:
+                    self.hoverboard_mesh = Entity(
+                        parent=self.model_root, model="quad", texture=hb_tex,
+                        scale=(1.1, 2.4), rotation_x=90, position=(0, 0.05, 0), unlit=True
+                    )
+                else:
+                    self.hoverboard_mesh = Entity(
+                        parent=self.model_root, model="cube", color=color.hex("#00ccff"),
+                        scale=(0.95, 0.1, 2.2), position=(0, 0.1, 0)
+                    )
+        else:
+            if getattr(self, "hoverboard_mesh", None) is not None:
+                from ursina import destroy
+                destroy(self.hoverboard_mesh)
+                self.hoverboard_mesh = None
+
+
+    def set_jetpack_active(self, active: bool) -> None:
+        """Attaches/removes twin spray-can Jetpack on Jake's back with thruster effects."""
+        if active:
+            if getattr(self, "jetpack_mesh", None) is None:
+                from game import textures as tx
+                jp_tex = tx.get_custom_texture("powerup_jetpack.png")
+                self.jetpack_mesh = Entity(
+                    parent=self.torso if hasattr(self, "torso") else self.model_root,
+                    model="quad" if jp_tex else "cube",
+                    texture=jp_tex,
+                    color=color.white if jp_tex else color.hex("#44cc22"),
+                    scale=(0.85, 0.95) if jp_tex else (0.5, 0.7, 0.3),
+                    position=(0, 0, -0.26) if hasattr(self, "torso") else (0, 1.2, -0.26),
+                    rotation_y=180 if jp_tex else 0,
+                    unlit=True
+                )
+                self.jetpack_flames = []
+                for x_off in (-0.18, 0.18):
+                    flame = Entity(
+                        parent=self.jetpack_mesh, model="quad",
+                        color=color.hex("#ffaa00"), scale=(0.22, 0.8),
+                        position=(x_off, -0.55, 0.01), unlit=True
+                    )
+                    self.jetpack_flames.append(flame)
+        else:
+            if getattr(self, "jetpack_mesh", None) is not None:
+                from ursina import destroy
+                destroy(self.jetpack_mesh)
+                self.jetpack_mesh = None
+                self.jetpack_flames = []
+
     def reset(self) -> None:
+        self.set_hoverboard_active(False)
+        self.set_jetpack_active(False)
         self.lane = 0
         self.position = (0, 0, 0)
         self.vy = 0.0
@@ -141,6 +197,8 @@ class Player(Entity):
                 self.leg_l.rotation = (0, 0, 0)
                 self.leg_r.rotation = (0, 0, 0)
 
+
+
     # --- commands ------------------------------------------------------------
     def move(self, direction: int) -> None:
         self.lane = logic.clamp_lane(self.lane + direction)
@@ -154,10 +212,17 @@ class Player(Entity):
             self.grounded = False
             self.roll_timer = 0.0
 
+    def boost_up(self, amount: float = 12.0) -> None:
+        """Launches the player high into the air (e.g. for super jump / jetpack prompts)."""
+        self.vy = amount
+        self.grounded = False
+        self.roll_timer = 0.0
+
     def roll(self) -> None:
         self.roll_timer = self.cfg["roll_duration"]
         if not self.grounded:
             self.vy = min(self.vy, -self.cfg["jump_velocity"] * 1.2)    # slam down
+
 
     # --- per-frame -----------------------------------------------------------
     def tick(self, dt: float, speed: float, support_y: float = 0.0) -> None:
@@ -187,7 +252,14 @@ class Player(Entity):
         if self.roll_timer > 0:
             self.roll_timer = max(0.0, self.roll_timer - dt)
 
+        if getattr(self, "jetpack_flames", None):
+            import random
+            for flame in self.jetpack_flames:
+                flame.scale_y = 0.7 + random.uniform(-0.15, 0.25)
+                flame.color = color.hex(random.choice(["#ffaa00", "#ff4400", "#ffea00", "#00e5ff"]))
+
         self._animate(dt, speed, dx)
+
         self.shadow.x = self.x
         self.shadow.y = target_ground + 0.02
         self.shadow.scale = (1.0 - min(self.y - target_ground, 3) * 0.15,
