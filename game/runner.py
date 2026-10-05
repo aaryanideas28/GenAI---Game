@@ -221,11 +221,19 @@ class Game(Entity):
         self.speed = self.cfg["start_speed"]
         self.distance = 0.0
         self.coin_count = 0
+        self.bonus_score = 0
+        self.powerup_timers = {
+            "jetpack": 0.0, "magnet": 0.0, "sneakers": 0.0,
+            "multiplier": 0.0, "hoverboard": 0.0
+        }
+        self.player.cfg["jump_velocity"] = self.cfg.get("jump_velocity", 15.0)
         self.state = STATE_PLAYING
         self.state_time = 0.0
         self.hud.center.text = ""
         self.hud.sub.text = ""
         self.hud.countdown.text = ""
+        self.hud.powerup_badge.text = ""
+        self.hud.toast.text = ""
 
     def game_over(self) -> None:
         self.state = STATE_OVER
@@ -279,7 +287,7 @@ class Game(Entity):
             self.rule_executor.trigger_event("on_jump")
         elif self.state == STATE_MENU:
             self.start_from_menu()
-        elif self.state == STATE_OVER and self.state_time > 0.8:
+        elif self.state == STATE_OVER and self.state_time > 0.2:
             self.restart_run()
 
     def cmd_roll(self) -> None:
@@ -289,6 +297,11 @@ class Game(Entity):
 
 
     def input(self, key: str) -> None:
+        if self.state == STATE_OVER:
+            if self.state_time > 0.2 and key in ("space", "r", "enter", "up arrow", "w", "a", "d", "s", "down arrow", "left arrow", "right arrow"):
+                self.restart_run()
+            return
+
         if key in ("left arrow", "a"):
             self.cmd_move(-1)
         elif key in ("right arrow", "d"):
@@ -299,8 +312,6 @@ class Game(Entity):
             self.cmd_roll()
         elif key == "p":
             self.toggle_pause()
-        elif key in ("space", "r") and self.state == STATE_OVER and self.state_time > 0.8:
-            self.restart_run()
         elif key == "c":
             try:
                 import controller
@@ -319,7 +330,7 @@ class Game(Entity):
                 if (kind == commands.ACTION and value == "JUMP") or (kind == commands.LANE):
                     self.start_from_menu()
             elif self.state == STATE_OVER:
-                if kind == commands.ACTION and value == "JUMP" and self.state_time > 0.8:
+                if self.state_time > 0.2:
                     self.restart_run()
             elif self.state == STATE_PLAYING:
                 if kind == commands.LANE and value in logic.LANE_BY_NAME:
