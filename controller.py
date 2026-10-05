@@ -125,58 +125,72 @@ def run_vision_loop(camera_index: int = 0, headless: bool = True,
                 camera_index, not headless)
     calibrated = False
     stable_frames = 0
+    win_name = "Subway Surfers - Gesture Cam"
+    win_initialized = False
 
     try:
         while not _stop_event.is_set():
-            pf = pipeline.read()
-            if pf is None:
-                time.sleep(0.005)
-                continue
+            try:
+                pf = pipeline.read()
+                if pf is None:
+                    time.sleep(0.005)
+                    continue
 
-            bus.publish(EVENT_POSE_FRAME, pf)
+                bus.publish(EVENT_POSE_FRAME, pf)
 
-            # Auto-trigger vertical calibration once user pose is stable
-            if not calibrated:
-                if pf.pose_detected and pf.mid_shoulder is not None:
-                    stable_frames += 1
-                    if stable_frames >= 12:
+                # Auto-trigger vertical calibration once user pose is stable
+                if not calibrated:
+                    if pf.pose_detected and pf.mid_shoulder is not None:
+                        stable_frames += 1
+                        if stable_frames >= 12:
+                            bus.publish(EVENT_CALIBRATE, {"timestamp": time.time()})
+                            calibrated = True
+                    else:
+                        stable_frames = 0
+
+                if not headless and pf.frame is not None:
+                    import cv2
+                    if not win_initialized:
+                        cv2.namedWindow(win_name, cv2.WINDOW_AUTOSIZE)
+                        try:
+                            cv2.setWindowProperty(win_name, cv2.WND_PROP_TOPMOST, 1)
+                        except Exception:
+                            pass
+                        win_initialized = True
+
+                    extra_lines = []
+                    # Add real-time posture indicators to overlay
+                    try:
+                        if v_module and v_module.calibrated:
+                            det = v_module.detector
+                            extra_lines.append(f"POSTURE: rel={det.y_rel:+.2f} (CROUCH > 0.50)")
+                            extra_lines.append(f"DEPTH: {'OK' if det.depth_ok else 'TOO CLOSE / FAR'}")
+                    except Exception:
+                        pass
+
+                    # Draw skeleton without default status text
+                    debug_img = pipeline.draw_debug(pf.frame, pf, show_status=False)
+
+                    # Render Teammate 5 HUD (thin 1px cyan lane boundary dividers, 1px threshold lines & status panel)
+                    if hud_module is not None:
+                        debug_img = hud_module.render(
+                            debug_img,
+                            pose_frame=pf,
+                            horizontal_tracker=h_tracker,
+                            vertical_module=v_module,
+                            fps=pipeline.get_fps(),
+                            extra_lines=extra_lines,
+                        )
+
+                    cv2.imshow(win_name, debug_img)
+                    key = cv2.waitKey(1) & 0xFF
+                    if key in (27, ord("q")):
+                        break
+                    elif key == ord("c"):
                         bus.publish(EVENT_CALIBRATE, {"timestamp": time.time()})
-                        calibrated = True
-                else:
-                    stable_frames = 0
-
-            if not headless and pf.frame is not None:
-                import cv2
-                extra_lines = []
-                # Add real-time posture indicators to overlay
-                try:
-                    if v_module and v_module.calibrated:
-                        det = v_module.detector
-                        extra_lines.append(f"POSTURE: rel={det.y_rel:+.2f} (CROUCH > 0.50)")
-                        extra_lines.append(f"DEPTH: {'OK' if det.depth_ok else 'TOO CLOSE / FAR'}")
-                except Exception:
-                    pass
-
-                # Draw skeleton without default status text
-                debug_img = pipeline.draw_debug(pf.frame, pf, show_status=False)
-
-                # Render Teammate 5 HUD (thin 1px cyan lane boundary dividers, 1px threshold lines & status panel)
-                if hud_module is not None:
-                    debug_img = hud_module.render(
-                        debug_img,
-                        pose_frame=pf,
-                        horizontal_tracker=h_tracker,
-                        vertical_module=v_module,
-                        fps=pipeline.get_fps(),
-                        extra_lines=extra_lines,
-                    )
-
-                cv2.imshow("Subway Surfers - Gesture Cam", debug_img)
-                key = cv2.waitKey(1) & 0xFF
-                if key in (27, ord("q")):
-                    break
-                elif key == ord("c"):
-                    bus.publish(EVENT_CALIBRATE, {"timestamp": time.time()})
+            except Exception as loop_exc:
+                logger.exception("Error in vision loop: %s", loop_exc)
+                time.sleep(0.02)
     finally:
         pipeline.stop()
         if not headless:

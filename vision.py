@@ -411,6 +411,7 @@ class VisionPipeline:
         frame: np.ndarray | None,
         pose_frame: PoseFrame,
         overlay_lines: Sequence[str] | None = None,
+        show_status: bool = True,
     ) -> np.ndarray:
         """Return a copy of the frame with a thin skeleton, key dots, FPS and status text."""
         source = frame if frame is not None else pose_frame.frame
@@ -444,15 +445,21 @@ class VisionPipeline:
                 cv2.circle(img, pose_frame.mid_shoulder_px, MID_RING_RADIUS, COLOR_MID, 1, cv2.LINE_AA)
                 cv2.circle(img, pose_frame.mid_shoulder_px, 2, COLOR_MID, -1, cv2.LINE_AA)
 
-        fps = self.get_fps()
-        lines: list[tuple[str, tuple[int, int, int]]] = [
-            (f"FPS {fps:4.1f}", COLOR_OK if fps >= TARGET_CAMERA_FPS * 0.95 else COLOR_WARN),
-            ("TRACKED" if pose_frame.pose_detected else "NO POSE", COLOR_OK if pose_frame.pose_detected else COLOR_WARN),
-        ]
-        for extra in overlay_lines or []:
-            lines.append((extra, COLOR_TEXT))
-        for i, (text, color) in enumerate(lines):
-            org = (8, 18 + i * 18)
-            cv2.putText(img, text, org, FONT, 0.5, COLOR_SHADOW, 3, cv2.LINE_AA)
-            cv2.putText(img, text, org, FONT, 0.5, color, 1, cv2.LINE_AA)
+        if show_status:
+            fps = self.get_fps()
+            lines: list[tuple[str, tuple[int, int, int]]] = [
+                (f"FPS {fps:4.1f}", COLOR_OK if fps >= TARGET_CAMERA_FPS * 0.95 else COLOR_WARN),
+                ("TRACKED" if pose_frame.pose_detected else "NO POSE", COLOR_OK if pose_frame.pose_detected else COLOR_WARN),
+            ]
+            for extra in overlay_lines or []:
+                lines.append((extra, COLOR_TEXT))
+            for i, (text, color) in enumerate(lines):
+                org = (8, 18 + i * 18)
+                cv2.putText(img, text, org, FONT, 0.5, COLOR_SHADOW, 3, cv2.LINE_AA)
+                cv2.putText(img, text, org, FONT, 0.5, color, 1, cv2.LINE_AA)
+        elif overlay_lines:
+            for i, extra in enumerate(overlay_lines):
+                org = (8, 18 + i * 18)
+                cv2.putText(img, extra, org, FONT, 0.5, COLOR_SHADOW, 3, cv2.LINE_AA)
+                cv2.putText(img, extra, org, FONT, 0.5, COLOR_TEXT, 1, cv2.LINE_AA)
         return img

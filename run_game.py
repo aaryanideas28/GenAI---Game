@@ -12,7 +12,7 @@ from game.runner import main
 
 if __name__ == "__main__":
     if "--no-vision" not in sys.argv:
-        show_feed = "--cv-window" in sys.argv
+        show_feed = "--headless" not in sys.argv and "--no-cv-window" not in sys.argv
         start_vision_thread(show_feed=show_feed)
 
     try:
