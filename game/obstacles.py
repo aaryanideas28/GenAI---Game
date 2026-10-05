@@ -163,16 +163,28 @@ POWERUP_MAGNET = "magnet"
 POWERUP_SNEAKERS = "sneakers"
 POWERUP_MULTIPLIER = "multiplier"
 POWERUP_HOVERBOARD = "hoverboard"
-POWERUPS = (POWERUP_JETPACK, POWERUP_MAGNET, POWERUP_SNEAKERS, POWERUP_MULTIPLIER, POWERUP_HOVERBOARD)
+POWERUP_SHIELD = "shield"   # Headstart / Shield: smashes through obstacles safely
+POWERUPS = (POWERUP_JETPACK, POWERUP_MAGNET, POWERUP_SNEAKERS, POWERUP_MULTIPLIER, POWERUP_HOVERBOARD, POWERUP_SHIELD)
 
 
 class PowerUpToken(Entity):
-    """3D Subway Surfers Power-Up Item with authentic logo textures (Jetpack, Magnet, Super Sneakers, 2X Multiplier, Hoverboard)."""
+    """3D Subway Surfers Power-Up Item with authentic logo textures.
+    Supports all 6 power-ups: Jetpack, Magnet, Super Sneakers, 2X Multiplier, Hoverboard, Shield."""
     def __init__(self, kind: str, lane: int, cfg: dict, z: float, y: float = 1.2) -> None:
         x = logic.lane_to_x(lane, cfg["lane_width"])
         super().__init__(position=(x, y, z))
         self.kind = kind
         self.lane = lane
+
+        # Color map for fallback block colors per power-up
+        _fallback_colors = {
+            "jetpack":    "#44cc22",
+            "magnet":     "#ffaa00",
+            "sneakers":   "#ff55cc",
+            "multiplier": "#ff2255",
+            "hoverboard": "#00ccff",
+            "shield":     "#00e5ff",   # cyan for shield/headstart
+        }
 
         tex_filename = f"powerup_{kind}.png"
         tex = tx.get_custom_texture(tex_filename)
@@ -180,12 +192,15 @@ class PowerUpToken(Entity):
             self.model_part = Entity(parent=self, model="quad", texture=tex, scale=(1.35, 1.35),
                                      double_sided=True, unlit=True)
             # Glowing backing disc for 3D depth
-            Entity(parent=self.model_part, model="circle", color=color.hex("#ffe855aa"), scale=(1.2, 1.2), z=0.01)
+            glow_col = "#00e5ffaa" if kind == "shield" else "#ffe855aa"
+            Entity(parent=self.model_part, model="circle", color=color.hex(glow_col), scale=(1.2, 1.2), z=0.01)
         else:
-            self.model_part = Entity(parent=self, model="cube", color=color.hex("#ffea00"), scale=(0.6, 0.6, 0.2))
+            fb_col = _fallback_colors.get(kind, "#ffea00")
+            self.model_part = Entity(parent=self, model="cube", color=color.hex(fb_col), scale=(0.6, 0.6, 0.2))
 
         # Pulsing glowing ring around item
-        self.ring = Entity(parent=self, model="circle", color=color.hex("#ffffffaa"), scale=(1.1, 1.1), rotation_x=90, y=-0.5)
+        ring_col = "#00e5ffaa" if kind == "shield" else "#ffffffaa"
+        self.ring = Entity(parent=self, model="circle", color=color.hex(ring_col), scale=(1.1, 1.1), rotation_x=90, y=-0.5)
 
 
 

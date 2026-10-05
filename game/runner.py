@@ -25,6 +25,30 @@ from game.world import World
 from game.llm_synthesizer import LLMGameLogicSynthesizer, LogicRuleExecutor, BehavioralLogicPackage
 from game.prompt_ui import PromptUI
 
+# --------------------------------------------------------------------------
+# Game Event Dispatcher — typed on_jump / on_roll / on_frame / on_coin hooks
+# --------------------------------------------------------------------------
+try:
+    from game_events import (
+        GameEventDispatcher,
+        EVENT_JUMP, EVENT_ROLL, EVENT_COIN_COLLECT,
+        EVENT_LANE_CHANGE, EVENT_FRAME, EVENT_POWERUP_START, EVENT_POWERUP_END,
+        JumpEvent, RollEvent, CoinEvent, FrameEvent, LaneChangeEvent, PowerUpEvent,
+    )
+    import time as _time
+    _GAME_EVENTS_AVAILABLE = True
+except ImportError:
+    _GAME_EVENTS_AVAILABLE = False
+
+# --------------------------------------------------------------------------
+# Gemini Guardrail Engine — validates LLM prompts with Pydantic safety schema
+# --------------------------------------------------------------------------
+try:
+    from guardrail import GuardrailEngine
+    _GUARDRAIL_ENGINE: "GuardrailEngine | None" = GuardrailEngine()
+except Exception:
+    _GUARDRAIL_ENGINE = None
+
 
 logger = logging.getLogger("game")
 
@@ -112,8 +136,21 @@ class Game(Entity):
         self.inverted_controls = False
         self.powerup_timers: dict[str, float] = {
             "jetpack": 0.0, "magnet": 0.0, "sneakers": 0.0,
-            "multiplier": 0.0, "hoverboard": 0.0
+            "multiplier": 0.0, "hoverboard": 0.0, "shield": 0.0,
         }
+        # Hoverboard post-crash invincibility window (seconds; set on absorb-hit)
+        self._hoverboard_invincible_timer: float = 0.0
+        _HOVERBOARD_INVINC_S = 2.5
+        self._HOVERBOARD_INVINC_S = _HOVERBOARD_INVINC_S
+
+        # Game-event dispatcher — emits typed on_jump/on_roll/on_frame/on_coin hooks
+        if _GAME_EVENTS_AVAILABLE:
+            from event_bus import EventBus as _EventBus
+            self._event_bus = _EventBus()
+            self._game_dispatcher = GameEventDispatcher()
+            self._frame_count = 0
+        else:
+            self._game_dispatcher = None
 
         self.best = _load_best()
         self.state = STATE_PROMPT
@@ -133,40 +170,111 @@ class Game(Entity):
         self.show_prompt_ui(default_prompt=llm_prompt)
 
     def activate_powerup(self, kind: str) -> None:
-        """Triggers dynamic Subway Surfers Power-Up item (Jetpack, Magnet, Super Sneakers, 2X Multiplier, Hoverboard)."""
+        """Triggers all 6 Subway Surfers Power-Ups: Jetpack, Magnet, Super Sneakers,
+        2X Multiplier, Hoverboard, and Shield/Headstart. Supports stackability."""
         from game.obstacles import (
             POWERUP_JETPACK, POWERUP_MAGNET, POWERUP_SNEAKERS,
-            POWERUP_MULTIPLIER, POWERUP_HOVERBOARD
+            POWERUP_MULTIPLIER, POWERUP_HOVERBOARD, POWERUP_SHIELD
         )
+        is_stacked = self.powerup_timers.get(kind, 0.0) > 0
+
         if kind == POWERUP_JETPACK:
-            self.powerup_timers[POWERUP_JETPACK] = 8.0
+            self.powerup_timers[POWERUP_JETPACK] = self.powerup_timers.get(POWERUP_JETPACK, 0.0) + 8.0 if is_stacked else 8.0
+            self._jetpack_descending = False
             self.player.set_jetpack_active(True)
-            self.hud.show_toast("🚀 JETPACK FLYING!", 2.5)
+            self.speed = max(self.speed, 16.0)
+            self.hud.show_toast("🚀 JETPACK FLYING!" if not is_stacked else "🚀 JETPACK EXTENDED!", 2.5)
             self.obstacles.spawn_sky_coins(self.distance + 15.0)
         elif kind == POWERUP_MAGNET:
-            self.powerup_timers[POWERUP_MAGNET] = 10.0
-            self.hud.show_toast("🧲 COIN MAGNET!", 2.5)
+            self.powerup_timers[POWERUP_MAGNET] = self.powerup_timers.get(POWERUP_MAGNET, 0.0) + 10.0 if is_stacked else 10.0
+            self.hud.show_toast("🧲 COIN MAGNET!" if not is_stacked else "🧲 MAGNET EXTENDED!", 2.5)
         elif kind == POWERUP_SNEAKERS:
-            self.powerup_timers[POWERUP_SNEAKERS] = 8.0
-            self.hud.show_toast("👟 SUPER SNEAKERS!", 2.5)
+            self.powerup_timers[POWERUP_SNEAKERS] = self.powerup_timers.get(POWERUP_SNEAKERS, 0.0) + 10.0 if is_stacked else 10.0
+            self.player.cfg["jump_velocity"] = 26.0
+            self.player.cfg["gravity"] = self.cfg.get("gravity", 36.0) * 0.55   # increased hangtime to clear full trains
+            self.hud.show_toast("👟 SUPER SNEAKERS!" if not is_stacked else "👟 SNEAKERS EXTENDED!", 2.5)
         elif kind == POWERUP_MULTIPLIER:
-            self.powerup_timers[POWERUP_MULTIPLIER] = 12.0
-            self.hud.show_toast("✖️2 MULTIPLIER!", 2.5)
+            self.powerup_timers[POWERUP_MULTIPLIER] = self.powerup_timers.get(POWERUP_MULTIPLIER, 0.0) + 12.0 if is_stacked else 12.0
+            self.hud.show_toast("✖️2 MULTIPLIER!" if not is_stacked else "✖️2 MULTIPLIER EXTENDED!", 2.5)
         elif kind == POWERUP_HOVERBOARD:
-            self.powerup_timers[POWERUP_HOVERBOARD] = 12.0
+            self.powerup_timers[POWERUP_HOVERBOARD] = self.powerup_timers.get(POWERUP_HOVERBOARD, 0.0) + 12.0 if is_stacked else 12.0
+            self._hoverboard_invincible_timer = 0.0   # reset invincibility
             self.player.set_hoverboard_active(True)
-            self.hud.show_toast("🛹 HOVERBOARD SHIELD!", 2.5)
+            self.hud.show_toast("🛹 HOVERBOARD SHIELD!" if not is_stacked else "🛹 HOVERBOARD EXTENDED!", 2.5)
+        elif kind == POWERUP_SHIELD:
+            self.powerup_timers[POWERUP_SHIELD] = self.powerup_timers.get(POWERUP_SHIELD, 0.0) + 8.0 if is_stacked else 8.0
+            self.hud.show_toast("🛡️ SHIELD ACTIVE!" if not is_stacked else "🛡️ SHIELD EXTENDED!", 2.5)
+
+        # Emit power-up start event to game_events dispatcher
+        if self._game_dispatcher and _GAME_EVENTS_AVAILABLE:
+            dur = self.powerup_timers.get(kind, 0.0)
+            self._game_dispatcher.emit_powerup(kind, dur, started=True, stacked=is_stacked)
 
 
     def apply_llm_prompt(self, prompt: str, api_key: str | None = None) -> BehavioralLogicPackage:
-        """Synthesizes dynamic gameplay rules via LLM Game Logic Synthesizer and applies them."""
+        """Synthesizes dynamic gameplay rules via LLM Game Logic Synthesizer and applies them.
+
+        Layer 1: Gemini GuardrailEngine validates parameters with Pydantic schema.
+        Layer 2: PromptGuard checks for injections / dangerous commands.
+        Layer 3: LLMGameLogicSynthesizer synthesizes executable rule hooks.
+        """
+        # --- Layer 1: Gemini-backed parameter guardrail -----------------------
+        if _GUARDRAIL_ENGINE is not None:
+            guardrail_result = _GUARDRAIL_ENGINE.evaluate(prompt)
+            if not guardrail_result.allowed:
+                # Visual CAUTION/WARNING banner on screen
+                self._show_guardrail_banner(
+                    f"⚠ CAUTION [{guardrail_result.threat_level}]: {guardrail_result.reason}"
+                )
+                # Return a blocked package so caller knows
+                return BehavioralLogicPackage(
+                    title="Prompt Blocked by Guardrail",
+                    summary=guardrail_result.reason,
+                    mode_type="custom_rules",
+                    hooks=[],
+                    state={},
+                    raw_prompt=prompt,
+                    json_response="",
+                )
+            else:
+                # Apply validated numeric game parameters directly
+                p = guardrail_result.params
+                if p.game_speed is not None:
+                    self.cfg["start_speed"] = p.game_speed
+                if p.jump_height is not None:
+                    self.player.cfg["jump_velocity"] = p.jump_height * 15.0
+                if p.score_multiplier is not None:
+                    self.powerup_timers["multiplier"] = 12.0 if p.score_multiplier >= 2.0 else 0.0
+                if p.powerup:
+                    _pu_map = {
+                        "Jetpack": "jetpack", "CoinMagnet": "magnet",
+                        "SuperSneakers": "sneakers", "ScoreMultiplier": "multiplier",
+                        "Hoverboard": "hoverboard", "Shield": "shield",
+                    }
+                    mapped = _pu_map.get(p.powerup, p.powerup.lower())
+                    self.activate_powerup(mapped)
+
+        # --- Layer 2 + 3: LLM rule synthesis ---------------------------------
         package = self.synthesizer.synthesize(prompt)
         self.rule_executor.set_package(package)
-        if package.title == "Prompt Blocked":
+        if package.title in ("Prompt Blocked", "Prompt Blocked by Guardrail"):
             self.hud.show_toast(f"Guardrail: {package.summary}", 3.5)
         else:
             self.hud.show_toast(f"AI Mode Loaded: {package.title}", 3.0)
         return package
+
+    def _show_guardrail_banner(self, message: str, duration: float = 4.0) -> None:
+        """Displays a flashing red CAUTION/WARNING banner on the HUD when a prompt is blocked."""
+        # Use HUD toast with extended duration and warning formatting
+        self.hud.show_toast(message, duration)
+        # Additional high-visibility center text for 2s
+        self.hud.center.text = "⚠ PROMPT BLOCKED"
+        from ursina import invoke
+        invoke(self._clear_warning_banner, delay=2.0)
+
+    def _clear_warning_banner(self) -> None:
+        if self.state not in (STATE_MENU, STATE_PROMPT):
+            self.hud.center.text = ""
 
 
     def set_inverted_controls(self, inverted: bool) -> None:
@@ -254,8 +362,9 @@ class Game(Entity):
         self.bonus_score = 0
         self.powerup_timers = {
             "jetpack": 0.0, "magnet": 0.0, "sneakers": 0.0,
-            "multiplier": 0.0, "hoverboard": 0.0
+            "multiplier": 0.0, "hoverboard": 0.0, "shield": 0.0,
         }
+        self._hoverboard_invincible_timer = 0.0
         self.player.cfg["jump_velocity"] = self.cfg.get("jump_velocity", 15.0)
         self.state = STATE_PLAYING
         self.state_time = 0.0
@@ -296,6 +405,55 @@ class Game(Entity):
         raw_score = int(self.distance * self.cfg["score_per_meter"]) * mult + self.coin_count * 10 + self.bonus_score
         return max(0, raw_score)
 
+    # --- game_events dispatcher helpers (on_jump, on_roll, on_frame, on_lane_change) --
+    def _emit_jump_event(self) -> None:
+        if self._game_dispatcher and _GAME_EVENTS_AVAILABLE:
+            self._game_dispatcher.emit(JumpEvent(
+                name=EVENT_JUMP,
+                timestamp=_time.time(),
+                data={"lane": self.player.lane},
+            ))
+
+    def _emit_roll_event(self) -> None:
+        if self._game_dispatcher and _GAME_EVENTS_AVAILABLE:
+            self._game_dispatcher.emit(RollEvent(
+                name=EVENT_ROLL,
+                timestamp=_time.time(),
+                data={"lane": self.player.lane},
+            ))
+
+    def _emit_coin_event(self, coin_x: float = 0.0, coin_z: float = 0.0) -> None:
+        if self._game_dispatcher and _GAME_EVENTS_AVAILABLE:
+            self._game_dispatcher.emit(CoinEvent(
+                name=EVENT_COIN_COLLECT,
+                timestamp=_time.time(),
+                x_norm=coin_x,
+                y_norm=coin_z,
+                magnet_assisted=(self.powerup_timers.get("magnet", 0.0) > 0),
+                data={"coin_x": coin_x, "coin_z": coin_z},
+            ))
+
+    def _emit_lane_event(self, lane: int) -> None:
+        if self._game_dispatcher and _GAME_EVENTS_AVAILABLE:
+            lane_str = {-1: "LEFT", 0: "CENTER", 1: "RIGHT"}.get(lane, "CENTER")
+            self._game_dispatcher.emit(LaneChangeEvent(
+                name=EVENT_LANE_CHANGE,
+                timestamp=_time.time(),
+                lane=lane_str,
+                data={"lane": lane_str},
+            ))
+
+    def _emit_frame_event(self, dt: float) -> None:
+        if self._game_dispatcher and _GAME_EVENTS_AVAILABLE:
+            self._frame_count += 1
+            fps = 1.0 / dt if dt > 0 else 0.0
+            self._game_dispatcher.emit(FrameEvent(
+                name=EVENT_FRAME,
+                timestamp=_time.time(),
+                fps=fps,
+                data={"frame": self._frame_count, "dt": dt},
+            ))
+
     # --- commands (keyboard + gesture queue share these) ---------------------
     def cmd_move(self, direction: int) -> None:
         if self.state == STATE_PLAYING:
@@ -303,6 +461,7 @@ class Game(Entity):
             self.prev_lane = self.player.lane
             self.player.move(eff_dir)
             self.rule_executor.trigger_event("on_lane_change")
+            self._emit_lane_event(self.player.lane)   # game_events hook
 
     def cmd_set_lane(self, lane: int) -> None:
         if self.state == STATE_PLAYING:
@@ -310,11 +469,13 @@ class Game(Entity):
             self.prev_lane = self.player.lane
             self.player.set_lane(eff_lane)
             self.rule_executor.trigger_event("on_lane_change")
+            self._emit_lane_event(self.player.lane)   # game_events hook
 
     def cmd_jump(self) -> None:
         if self.state == STATE_PLAYING:
             self.player.jump()
             self.rule_executor.trigger_event("on_jump")
+            self._emit_jump_event()   # game_events hook
         elif self.state == STATE_MENU:
             self.start_from_menu()
         elif self.state == STATE_OVER and self.state_time > 0.2:
@@ -324,6 +485,7 @@ class Game(Entity):
         if self.state == STATE_PLAYING:
             self.player.roll()
             self.rule_executor.trigger_event("on_roll")
+            self._emit_roll_event()   # game_events hook
 
 
     def input(self, key: str) -> None:
@@ -415,6 +577,10 @@ class Game(Entity):
         self.hud.tick(dt)
 
         if self.state == STATE_PLAYING:
+            # Tick hoverboard post-crash invincibility
+            if self._hoverboard_invincible_timer > 0:
+                self._hoverboard_invincible_timer = max(0.0, self._hoverboard_invincible_timer - dt)
+
             # Tick active power-up timers
             for k in list(self.powerup_timers.keys()):
                 if self.powerup_timers[k] > 0:
@@ -425,7 +591,13 @@ class Game(Entity):
                             self.player.set_hoverboard_active(False)
                         elif k == "jetpack":
                             self.player.set_jetpack_active(False)
+                            self._jetpack_descending = True
+                        elif k == "sneakers":
+                            self.player.cfg["jump_velocity"] = self.cfg.get("jump_velocity", 15.0)
+                            self.player.cfg["gravity"] = self.cfg.get("gravity", 36.0)
                         self.hud.show_toast(f"{k.upper()} EXPIRED", 1.5)
+                        if self._game_dispatcher and _GAME_EVENTS_AVAILABLE:
+                            self._game_dispatcher.emit_powerup(k, 0.0, started=False)
 
             # Active power-up behaviors
             if self.powerup_timers["jetpack"] > 0:
@@ -433,23 +605,37 @@ class Game(Entity):
                 self.player.y = lerp(self.player.y, target_sky_y, min(1, dt * 5))
                 self.player.grounded = True
                 self.player.vy = 0.0
-
+            elif getattr(self, "_jetpack_descending", False):
+                # Smooth descent upon jetpack expiration
+                support_y = logic.get_surface_y(self.player.x, self.player.y, self.cfg["lane_width"], self.obstacles.live_specs())
+                self.player.y = lerp(self.player.y, support_y, min(1, dt * 4))
+                if abs(self.player.y - support_y) < 0.15:
+                    self.player.y = support_y
+                    self._jetpack_descending = False
 
             if self.powerup_timers["magnet"] > 0:
-                self.obstacles.attract_coins(self.player.x, 0.0, range_dist=12.0)
+                self.obstacles.attract_coins(self.player.x, 0.0, range_dist=14.0)
 
             if self.powerup_timers["sneakers"] > 0:
                 self.player.cfg["jump_velocity"] = 26.0
+                self.player.cfg["gravity"] = self.cfg.get("gravity", 36.0) * 0.55
             else:
                 self.player.cfg["jump_velocity"] = self.cfg.get("jump_velocity", 15.0)
-
+                self.player.cfg["gravity"] = self.cfg.get("gravity", 36.0)
 
             mult_val = 2 if self.powerup_timers["multiplier"] > 0 else 1
             self.hud.multiplier.text = f"x{mult_val}"
 
-            active_names = [k.upper() for k, v in self.powerup_timers.items() if v > 0]
-            if active_names:
-                self.hud.powerup_badge.text = "⚡ " + " | ".join(active_names)
+            # Visual glow states & badges with countdown seconds
+            active_badges = []
+            for k, v in self.powerup_timers.items():
+                if v > 0:
+                    icon = {"jetpack": "🚀", "magnet": "🧲", "sneakers": "👟", "multiplier": "✖️2", "hoverboard": "🛹", "shield": "🛡️"}.get(k, "⚡")
+                    active_badges.append(f"{icon} {k.upper()} {v:.0f}s")
+            if self._hoverboard_invincible_timer > 0:
+                active_badges.append(f"✨ INVINCIBLE {self._hoverboard_invincible_timer:.1f}s")
+            if active_badges:
+                self.hud.powerup_badge.text = " | ".join(active_badges)
             else:
                 self.hud.powerup_badge.text = ""
 
@@ -462,6 +648,7 @@ class Game(Entity):
             self.inspector.tick(dt, self.speed, True)
             self._collide()
             self.rule_executor.trigger_event("on_tick", dt)
+            self._emit_frame_event(dt)   # game_events on_frame hook
         elif self.state == STATE_COUNTDOWN:
             self.world.tick(dt, 0.0)
             self.player.tick(dt, 0.0, 0.0)
@@ -515,13 +702,29 @@ class Game(Entity):
             if self.powerup_timers.get("jetpack", 0.0) > 0:
                 continue
 
+            # Shield / Headstart: smash safely through obstacles
+            if self.powerup_timers.get("shield", 0.0) > 0:
+                if logic.overlaps(p.x, p.bottom, p.top, o.spec, lw):
+                    self.obstacles.obstacles.remove(o)
+                    from ursina import destroy
+                    destroy(o)
+                    self.shake = 0.3
+                    self.hud.show_toast("🛡️ SHIELD SMASH!", 0.8)
+                continue
+
+            # Hoverboard post-crash invincibility window
+            if self._hoverboard_invincible_timer > 0:
+                continue
+
             if logic.overlaps(p.x, p.bottom, p.top, o.spec, lw):
-                # Hoverboard crash shield protection
+                # Hoverboard crash shield: absorb one fatal hit, trigger recovery stumble & grant post-crash invincibility
                 if self.powerup_timers.get("hoverboard", 0.0) > 0:
                     self.powerup_timers["hoverboard"] = 0.0
                     self.player.set_hoverboard_active(False)
-                    self.shake = 0.4
-                    self.hud.show_toast("🛹 HOVERBOARD SAVED YOU!", 2.0)
+                    # Start post-crash invincibility window
+                    self._hoverboard_invincible_timer = self._HOVERBOARD_INVINC_S
+                    self.shake = 0.45
+                    self.hud.show_toast(f"🛹 HOVERBOARD SAVED! Stumble & Invincible {self._HOVERBOARD_INVINC_S:.1f}s", 2.5)
                     self.obstacles.obstacles.remove(o)
                     from ursina import destroy
                     destroy(o)
@@ -553,6 +756,7 @@ class Game(Entity):
                 from ursina import destroy
                 destroy(c)
                 self.rule_executor.trigger_event("on_coin_collect", payload={"coin_x": coin_x, "coin_z": coin_z})
+                self._emit_coin_event(coin_x, coin_z)   # game_events on_coin_collect hook
 
 
     def _update_camera(self, dt: float) -> None:
