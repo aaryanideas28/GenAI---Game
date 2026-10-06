@@ -5,4 +5,5 @@ __pycache__/
 subway-surfers
 *.env
 secure.env
-.env
+.env
+*.csv

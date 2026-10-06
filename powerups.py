@@ -446,6 +446,23 @@ class PowerUpManager:
         """Manually cancel an active power-up."""
         self._expire_powerup(name)
 
+    def reset(self) -> None:
+        """Cancel all active power-ups and reset game-state parameters to defaults."""
+        with self._lock:
+            for timer in self._timers.values():
+                timer.cancel()
+            self._timers.clear()
+            self._active.clear()
+        self.player_x = 0.5
+        self.player_y_offset = 0.0
+        self.speed_multiplier = 1.0
+        self.jump_velocity_mult = 1.0
+        self.jump_hang_mult = 1.0
+        self.score_multiplier = 1
+        self.is_shielded = False
+        self.hoverboard_shatter = False
+        self._jetpack_landing = False
+
     def hoverboard_hit(self) -> bool:
         """
         Signal a fatal collision to the hoverboard.

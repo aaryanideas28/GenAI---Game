@@ -21,7 +21,10 @@ def get_custom_texture(name: str):
         from ursina import Texture
         p = Path(__file__).resolve().parent / "assets" / "custom" / name
         if p.is_file():
-            _custom_tex_cache[name] = Texture(str(p.resolve()))
+            try:
+                _custom_tex_cache[name] = Texture(str(p.resolve()))
+            except Exception:
+                _custom_tex_cache[name] = None
         else:
             _custom_tex_cache[name] = None
     return _custom_tex_cache[name]

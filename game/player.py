@@ -183,6 +183,8 @@ class Player(Entity):
     def reset(self) -> None:
         self.set_hoverboard_active(False)
         self.set_jetpack_active(False)
+        self.cfg["jump_velocity"] = 17.0
+        self.cfg["gravity"] = 55.0
         self.lane = 0
         self.position = (0, 0, 0)
         self.vy = 0.0

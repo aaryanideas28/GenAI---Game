@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import random
 
 from ursina import Entity, color, destroy
@@ -167,41 +168,170 @@ POWERUP_SHIELD = "shield"   # Headstart / Shield: smashes through obstacles safe
 POWERUPS = (POWERUP_JETPACK, POWERUP_MAGNET, POWERUP_SNEAKERS, POWERUP_MULTIPLIER, POWERUP_HOVERBOARD, POWERUP_SHIELD)
 
 
+def play_pickup_sound(kind: str) -> None:
+    """Plays an authentic audio chime / cue for power-up collection if audio device is available."""
+    try:
+        from ursina import Audio
+        # Audio cue trigger (safe fallback if asset file absent)
+        Audio("powerup", autoplay=True, loop=False)
+    except Exception:
+        pass
+
+
+class PickupVisualCue(Entity):
+    """Floating 3D expanding burst cue when a power-up or special collectible is picked up."""
+    def __init__(self, position, kind: str) -> None:
+        super().__init__(position=position)
+        self.age = 0.0
+        self.lifetime = 0.65
+        col_map = {
+            "magnet": "#ffaa00",
+            "jetpack": "#2ecc71",
+            "sneakers": "#ff4081",
+            "multiplier": "#ffd700",
+            "hoverboard": "#00e5ff",
+            "shield": "#00e5ff",
+        }
+        c = col_map.get(kind, "#ffffff")
+        self.burst_ring = Entity(parent=self, model="circle", color=color.hex(c),
+                                 scale=(0.9, 0.9), rotation_x=90)
+        self.star_glow = Entity(parent=self, model="quad", color=color.white,
+                                scale=(0.7, 0.7), double_sided=True)
+
+    def tick(self, dt: float) -> bool:
+        self.age += dt
+        self.y += 2.4 * dt
+        progress = min(1.0, self.age / self.lifetime)
+        self.burst_ring.scale = (0.9 + progress * 2.2, 0.9 + progress * 2.2)
+        alpha = max(0.0, 1.0 - progress)
+        self.burst_ring.alpha = alpha
+        self.star_glow.alpha = alpha
+        self.star_glow.rotation_z += 360 * dt
+        if self.age >= self.lifetime:
+            destroy(self)
+            return True
+        return False
+
+
 class PowerUpToken(Entity):
-    """3D Subway Surfers Power-Up Item with authentic logo textures.
-    Supports all 6 power-ups: Jetpack, Magnet, Super Sneakers, 2X Multiplier, Hoverboard, Shield."""
-    def __init__(self, kind: str, lane: int, cfg: dict, z: float, y: float = 1.2) -> None:
+    """3D Subway Surfers Power-Up Collectible Item.
+    Features authentic 3D geometry models:
+      - Magnet Horseshoe (curved U-magnet with silver pole caps)
+      - Jetpack Rocket Cylinder (dual booster cylinders with thrusters)
+      - Super Sneaker Shoe (3D high-top sneaker with sole and collar)
+      - 2X Star (embossed star profile token with halo)
+      - Hoverboard Box (floating hover deck with repulsor pads)
+      - Shield (energy buckler disc with glowing crest)
+    Includes floating/bobbing oscillation and pulsing aura rings.
+    """
+    def __init__(self, kind: str, lane: int, cfg: dict, z: float, y: float = 1.25) -> None:
         x = logic.lane_to_x(lane, cfg["lane_width"])
         super().__init__(position=(x, y, z))
         self.kind = kind
         self.lane = lane
+        self.base_y = y
+        self.bob_timer = random.uniform(0.0, 6.28)
 
-        # Color map for fallback block colors per power-up
-        _fallback_colors = {
-            "jetpack":    "#44cc22",
-            "magnet":     "#ffaa00",
-            "sneakers":   "#ff55cc",
-            "multiplier": "#ff2255",
-            "hoverboard": "#00ccff",
-            "shield":     "#00e5ff",   # cyan for shield/headstart
-        }
+        # Build dedicated 3D geometry per collectible type
+        self._build_3d_geometry(kind)
 
+        # Pulsing glowing aura ring around base
+        ring_col = "#00e5ffaa" if kind in ("shield", "hoverboard") else "#ffea00aa"
+        self.ring = Entity(parent=self, model="circle", color=color.hex(ring_col),
+                           scale=(1.15, 1.15), rotation_x=90, y=-0.55)
+
+    def _build_3d_geometry(self, kind: str) -> None:
         tex_filename = f"powerup_{kind}.png"
         tex = tx.get_custom_texture(tex_filename)
+
+        if kind == POWERUP_MAGNET:
+            # 1. Magnet Horseshoe: 3D U-shaped magnet with silver pole tips
+            red_col = color.hex("#e61919")
+            silver_col = color.hex("#e0e0e0")
+            # Left & right vertical arms
+            Entity(parent=self, model="cube", color=red_col, scale=(0.14, 0.65, 0.14), x=-0.28, y=0.0)
+            Entity(parent=self, model="cube", color=red_col, scale=(0.14, 0.65, 0.14), x=0.28, y=0.0)
+            # Top curved bridge arch
+            Entity(parent=self, model="cube", color=red_col, scale=(0.70, 0.16, 0.14), y=0.32)
+            # Silver pole caps (North and South poles)
+            Entity(parent=self, model="cube", color=silver_col, scale=(0.16, 0.22, 0.16), x=-0.28, y=-0.36)
+            Entity(parent=self, model="cube", color=silver_col, scale=(0.16, 0.22, 0.16), x=0.28, y=-0.36)
+
+        elif kind == POWERUP_JETPACK:
+            # 2. Jetpack Rocket Cylinder: twin booster cylinders with thruster nozzles
+            can_col = color.hex("#2ecc71")
+            metal_col = color.hex("#4a5568")
+            flame_col = color.hex("#f39c12")
+            # Dual cylinders
+            Entity(parent=self, model="cylinder", color=can_col, scale=(0.20, 0.70, 0.20), x=-0.22)
+            Entity(parent=self, model="cylinder", color=can_col, scale=(0.20, 0.70, 0.20), x=0.22)
+            # Top caps / nose domes
+            Entity(parent=self, model="sphere", color=metal_col, scale=(0.22, 0.25, 0.22), x=-0.22, y=0.45)
+            Entity(parent=self, model="sphere", color=metal_col, scale=(0.22, 0.25, 0.22), x=0.22, y=0.45)
+            # Bottom exhaust thrusters
+            Entity(parent=self, model="cylinder", color=flame_col, scale=(0.18, 0.20, 0.18), x=-0.22, y=-0.44)
+            Entity(parent=self, model="cylinder", color=flame_col, scale=(0.18, 0.20, 0.18), x=0.22, y=-0.44)
+            # Center mounting frame
+            Entity(parent=self, model="cube", color=metal_col, scale=(0.30, 0.35, 0.08), y=0.0)
+
+        elif kind == POWERUP_SNEAKERS:
+            # 3. Super Sneaker Shoe: 3D high-top sneaker with rubber sole and collar
+            sole_col = color.white
+            shoe_col = color.hex("#ff3388")
+            collar_col = color.hex("#ff1493")
+            # White rubber sole platform
+            Entity(parent=self, model="cube", color=sole_col, scale=(0.36, 0.12, 0.82), y=-0.38)
+            # Shoe main body
+            Entity(parent=self, model="cube", color=shoe_col, scale=(0.34, 0.32, 0.76), y=-0.18, z=-0.02)
+            # High-top ankle collar
+            Entity(parent=self, model="cube", color=collar_col, scale=(0.34, 0.44, 0.38), y=0.16, z=-0.16)
+            # Front white toe bumper
+            Entity(parent=self, model="cube", color=sole_col, scale=(0.34, 0.16, 0.20), y=-0.24, z=0.30)
+
+        elif kind == POWERUP_MULTIPLIER:
+            # 4. 2X Star: 3D 5-point star token with golden halo
+            star_mesh = m3d.make_star_2x_mesh(radius=0.48, thickness=0.16)
+            Entity(parent=self, model=star_mesh, color=color.hex("#ffd700"), scale=1.0)
+            # Central bold red accent disc
+            Entity(parent=self, model="circle", color=color.hex("#ff1744"), scale=(0.42, 0.42), z=0.09)
+            Entity(parent=self, model="circle", color=color.hex("#ff1744"), scale=(0.42, 0.42), z=-0.09)
+
+        elif kind == POWERUP_HOVERBOARD:
+            # 5. Hoverboard Box / Deck: futuristic tech deck with neon repulsor glow
+            deck_col = color.hex("#00c3ff")
+            neon_col = color.hex("#18ffff")
+            # Aerodynamic hover deck
+            Entity(parent=self, model="cube", color=deck_col, scale=(0.42, 0.10, 0.95), y=-0.10)
+            # Top grip tape strip
+            Entity(parent=self, model="cube", color=color.hex("#111827"), scale=(0.36, 0.04, 0.85), y=-0.04)
+            # Neon side edge light rails
+            Entity(parent=self, model="cube", color=neon_col, scale=(0.44, 0.08, 0.96), y=-0.10)
+            # Under-deck repulsor discs
+            Entity(parent=self, model="cylinder", color=neon_col, scale=(0.28, 0.08, 0.28), y=-0.24, z=-0.25)
+            Entity(parent=self, model="cylinder", color=neon_col, scale=(0.28, 0.08, 0.28), y=-0.24, z=0.25)
+
+        else:  # POWERUP_SHIELD
+            # 6. Shield: translucent cyan buckler aegis with protective boss
+            aegis_col = color.hex("#00e5ff")
+            Entity(parent=self, model="circle", color=aegis_col, scale=(0.88, 0.88), double_sided=True)
+            Entity(parent=self, model="sphere", color=color.hex("#ffffff"), scale=(0.38, 0.38, 0.18))
+            Entity(parent=self, model="cube", color=color.hex("#ffffff"), scale=(0.58, 0.12, 0.08))
+            Entity(parent=self, model="cube", color=color.hex("#ffffff"), scale=(0.12, 0.58, 0.08))
+
+        # Overlay authentic logo texture disc if available for high-fidelity presentation
         if tex:
-            self.model_part = Entity(parent=self, model="quad", texture=tex, scale=(1.35, 1.35),
-                                     double_sided=True, unlit=True)
-            # Glowing backing disc for 3D depth
-            glow_col = "#00e5ffaa" if kind == "shield" else "#ffe855aa"
-            Entity(parent=self.model_part, model="circle", color=color.hex(glow_col), scale=(1.2, 1.2), z=0.01)
-        else:
-            fb_col = _fallback_colors.get(kind, "#ffea00")
-            self.model_part = Entity(parent=self, model="cube", color=color.hex(fb_col), scale=(0.6, 0.6, 0.2))
+            badge = Entity(parent=self, model="quad", texture=tex, scale=(1.25, 1.25),
+                           double_sided=True, unlit=True)
+            Entity(parent=badge, model="circle", color=color.hex("#ffffff88"), scale=(1.15, 1.15), z=0.01)
 
-        # Pulsing glowing ring around item
-        ring_col = "#00e5ffaa" if kind == "shield" else "#ffffffaa"
-        self.ring = Entity(parent=self, model="circle", color=color.hex(ring_col), scale=(1.1, 1.1), rotation_x=90, y=-0.5)
-
+    def tick(self, dt: float, speed: float) -> None:
+        """Updates token position, rotating, bobbing, and pulsing."""
+        self.z -= speed * dt
+        self.rotation_y += 180 * dt
+        self.bob_timer += dt * 3.6
+        self.y = self.base_y + math.sin(self.bob_timer) * 0.15
+        pulse = 1.15 + math.sin(self.bob_timer * 2.2) * 0.12
+        self.ring.scale = (pulse, pulse)
 
 
 class ObstacleManager:
@@ -211,16 +341,23 @@ class ObstacleManager:
         self.obstacles: list[ObstacleEntity] = []
         self.coins: list[Coin] = []
         self.powerups: list[PowerUpToken] = []
+        self.cues: list[PickupVisualCue] = []
         self.until_next = 40.0           # first row comes after a short warm-up
 
     def clear(self) -> None:
-        for e in self.obstacles + self.coins + self.powerups:
+        for e in self.obstacles + self.coins + self.powerups + self.cues:
             destroy(e)
         self.obstacles.clear()
         self.coins.clear()
         self.powerups.clear()
+        self.cues.clear()
         self.until_next = 40.0
 
+    def spawn_pickup_cue(self, position, kind: str) -> None:
+        """Spawns an expanding 3D visual cue and audio feedback upon token pickup."""
+        cue = PickupVisualCue(position=position, kind=kind)
+        self.cues.append(cue)
+        play_pickup_sound(kind)
 
     def live_specs(self) -> list[logic.ObstacleSpec]:
         return [o.spec for o in self.obstacles]
@@ -235,8 +372,12 @@ class ObstacleManager:
             c.z -= speed * dt
             c.rotation_y += 220 * dt
         for p in self.powerups:
-            p.z -= speed * dt
-            p.rotation_y += 180 * dt
+            p.tick(dt, speed)
+
+        # Tick active visual pickup cues
+        for cue in list(self.cues):
+            if cue.tick(dt):
+                self.cues.remove(cue)
 
         # Prevent any moving obstacles from intruding into the tunnel clearance zone
         if world and hasattr(world, "tunnels"):

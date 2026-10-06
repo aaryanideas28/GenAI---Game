@@ -19,7 +19,11 @@ application.asset_folder = Path(__file__).resolve().parent.parent
 from game import commands, logic
 from game.config import ConfigWatcher, load_config
 from game.inspector import Inspector
-from game.obstacles import ObstacleManager
+from game.obstacles import (
+    ObstacleManager,
+    POWERUP_JETPACK, POWERUP_MAGNET, POWERUP_SNEAKERS,
+    POWERUP_MULTIPLIER, POWERUP_HOVERBOARD, POWERUP_SHIELD,
+)
 from game.player import Player
 from game.world import World
 from game.llm_synthesizer import LLMGameLogicSynthesizer, LogicRuleExecutor, BehavioralLogicPackage
@@ -117,11 +121,22 @@ class Hud:
 
 
 class Game(Entity):
-    def __init__(self, seed: int | None = None, llm_prompt: str | None = None) -> None:
+    def __init__(self, seed: int | None = None, llm_prompt: str | None = None,
+                 student_name: str = "Jake", roll_number: str = "SUB-001") -> None:
         super().__init__()
         self.cfg = load_config()
         self.watcher = ConfigWatcher()
         self.watch_timer = 0.0
+
+        self.student_name = student_name
+        self.roll_number = roll_number
+        from game.leaderboard import LeaderboardBackend
+        self.leaderboard = LeaderboardBackend(cfg=self.cfg)
+        self.powerups_collected: dict[str, int] = {
+            "jetpack": 0, "magnet": 0, "sneakers": 0,
+            "multiplier": 0, "hoverboard": 0, "shield": 0,
+        }
+        self.active_prompt_summary = "Vanilla / Default Rules"
 
         self.world = World(self.cfg)
         self.player = Player(self.cfg)
@@ -177,11 +192,13 @@ class Game(Entity):
             POWERUP_MULTIPLIER, POWERUP_HOVERBOARD, POWERUP_SHIELD
         )
         is_stacked = self.powerup_timers.get(kind, 0.0) > 0
+        self.powerups_collected[kind] = self.powerups_collected.get(kind, 0) + 1
 
         if kind == POWERUP_JETPACK:
             self.powerup_timers[POWERUP_JETPACK] = self.powerup_timers.get(POWERUP_JETPACK, 0.0) + 8.0 if is_stacked else 8.0
             self._jetpack_descending = False
-            self.player.set_jetpack_active(True)
+            if hasattr(self.player, "set_jetpack_active"):
+                self.player.set_jetpack_active(True)
             self.speed = max(self.speed, 16.0)
             self.hud.show_toast("🚀 JETPACK FLYING!" if not is_stacked else "🚀 JETPACK EXTENDED!", 2.5)
             self.obstacles.spawn_sky_coins(self.distance + 15.0)
@@ -190,16 +207,18 @@ class Game(Entity):
             self.hud.show_toast("🧲 COIN MAGNET!" if not is_stacked else "🧲 MAGNET EXTENDED!", 2.5)
         elif kind == POWERUP_SNEAKERS:
             self.powerup_timers[POWERUP_SNEAKERS] = self.powerup_timers.get(POWERUP_SNEAKERS, 0.0) + 10.0 if is_stacked else 10.0
-            self.player.cfg["jump_velocity"] = 26.0
-            self.player.cfg["gravity"] = self.cfg.get("gravity", 36.0) * 0.55   # increased hangtime to clear full trains
-            self.hud.show_toast("👟 SUPER SNEAKERS!" if not is_stacked else "👟 SNEAKERS EXTENDED!", 2.5)
+            if hasattr(self.player, "cfg") and isinstance(self.player.cfg, dict):
+                self.player.cfg["jump_velocity"] = 22.5
+                self.player.cfg["gravity"] = self.cfg.get("gravity", 55.0)
+            self.hud.show_toast("[SNEAKERS] SUPER JUMP ACTIVE!" if not is_stacked else "[SNEAKERS] EXTENDED!", 2.5)
         elif kind == POWERUP_MULTIPLIER:
             self.powerup_timers[POWERUP_MULTIPLIER] = self.powerup_timers.get(POWERUP_MULTIPLIER, 0.0) + 12.0 if is_stacked else 12.0
             self.hud.show_toast("✖️2 MULTIPLIER!" if not is_stacked else "✖️2 MULTIPLIER EXTENDED!", 2.5)
         elif kind == POWERUP_HOVERBOARD:
             self.powerup_timers[POWERUP_HOVERBOARD] = self.powerup_timers.get(POWERUP_HOVERBOARD, 0.0) + 12.0 if is_stacked else 12.0
             self._hoverboard_invincible_timer = 0.0   # reset invincibility
-            self.player.set_hoverboard_active(True)
+            if hasattr(self.player, "set_hoverboard_active"):
+                self.player.set_hoverboard_active(True)
             self.hud.show_toast("🛹 HOVERBOARD SHIELD!" if not is_stacked else "🛹 HOVERBOARD EXTENDED!", 2.5)
         elif kind == POWERUP_SHIELD:
             self.powerup_timers[POWERUP_SHIELD] = self.powerup_timers.get(POWERUP_SHIELD, 0.0) + 8.0 if is_stacked else 8.0
@@ -259,8 +278,10 @@ class Game(Entity):
         self.rule_executor.set_package(package)
         if package.title in ("Prompt Blocked", "Prompt Blocked by Guardrail"):
             self.hud.show_toast(f"Guardrail: {package.summary}", 3.5)
+            self.active_prompt_summary = "Vanilla / Default Rules"
         else:
             self.hud.show_toast(f"AI Mode Loaded: {package.title}", 3.0)
+            self.active_prompt_summary = f"{package.title}: {package.summary}" if package.summary else package.title
         return package
 
     def _show_guardrail_banner(self, message: str, duration: float = 4.0) -> None:
@@ -309,6 +330,8 @@ class Game(Entity):
         """Called when user submits prompt or clicks start from prompt UI."""
         if prompt:
             self.apply_llm_prompt(prompt)
+        else:
+            self.active_prompt_summary = "Vanilla / Default Rules"
         self.start_from_menu()
 
     def _show_menu(self) -> None:
@@ -329,11 +352,31 @@ class Game(Entity):
         self.speed = 0.0
         self.distance = 0.0
         self.coin_count = 0
+        self.bonus_score = 0
+        self.powerup_timers = {
+            "jetpack": 0.0, "magnet": 0.0, "sneakers": 0.0,
+            "multiplier": 0.0, "hoverboard": 0.0, "shield": 0.0,
+        }
+        self.powerups_collected = {
+            "jetpack": 0, "magnet": 0, "sneakers": 0,
+            "multiplier": 0, "hoverboard": 0, "shield": 0,
+        }
+        self._hoverboard_invincible_timer = 0.0
+        if hasattr(self.player, "set_hoverboard_active"):
+            self.player.set_hoverboard_active(False)
+        if hasattr(self.player, "set_jetpack_active"):
+            self.player.set_jetpack_active(False)
+        self._jetpack_descending = False
+        if hasattr(self.player, "cfg") and isinstance(self.player.cfg, dict):
+            self.player.cfg["jump_velocity"] = self.cfg.get("jump_velocity", 17.0)
+            self.player.cfg["gravity"] = self.cfg.get("gravity", 55.0)
         self.state = STATE_COUNTDOWN
         self.state_time = 0.0
         self.hud.center.text = ""
         self.hud.sub.text = ""
         self.hud.countdown.text = "3"
+        if hasattr(self.hud, "powerup_badge"):
+            self.hud.powerup_badge.text = ""
 
     def start(self) -> None:
         """Alias for start_from_menu."""
@@ -364,15 +407,28 @@ class Game(Entity):
             "jetpack": 0.0, "magnet": 0.0, "sneakers": 0.0,
             "multiplier": 0.0, "hoverboard": 0.0, "shield": 0.0,
         }
+        self.powerups_collected = {
+            "jetpack": 0, "magnet": 0, "sneakers": 0,
+            "multiplier": 0, "hoverboard": 0, "shield": 0,
+        }
         self._hoverboard_invincible_timer = 0.0
-        self.player.cfg["jump_velocity"] = self.cfg.get("jump_velocity", 15.0)
+        if hasattr(self.player, "set_hoverboard_active"):
+            self.player.set_hoverboard_active(False)
+        if hasattr(self.player, "set_jetpack_active"):
+            self.player.set_jetpack_active(False)
+        self._jetpack_descending = False
+        if hasattr(self.player, "cfg") and isinstance(self.player.cfg, dict):
+            self.player.cfg["jump_velocity"] = self.cfg.get("jump_velocity", 17.0)
+            self.player.cfg["gravity"] = self.cfg.get("gravity", 55.0)
         self.state = STATE_PLAYING
         self.state_time = 0.0
         self.hud.center.text = ""
         self.hud.sub.text = ""
         self.hud.countdown.text = ""
-        self.hud.powerup_badge.text = ""
-        self.hud.toast.text = ""
+        if hasattr(self.hud, "powerup_badge"):
+            self.hud.powerup_badge.text = ""
+        if hasattr(self.hud, "toast"):
+            self.hud.toast.text = ""
 
     def game_over(self) -> None:
         self.state = STATE_OVER
@@ -386,7 +442,77 @@ class Game(Entity):
             _save_best(score)
         self.hud.countdown.text = ""
         self.hud.center.text = "CRASHED!"
-        self.hud.sub.text = f"Score {score}    Coins {self.coin_count}    Best {self.best}\n\nSPACE / JUMP to run again    (TAB: Prompt)"
+
+        # Reset active power-ups and revert physics immediately on death
+        self.powerup_timers = {
+            "jetpack": 0.0, "magnet": 0.0, "sneakers": 0.0,
+            "multiplier": 0.0, "hoverboard": 0.0, "shield": 0.0,
+        }
+        self._hoverboard_invincible_timer = 0.0
+        if hasattr(self.player, "set_hoverboard_active"):
+            self.player.set_hoverboard_active(False)
+        if hasattr(self.player, "set_jetpack_active"):
+            self.player.set_jetpack_active(False)
+        self._jetpack_descending = False
+        if hasattr(self.player, "cfg") and isinstance(self.player.cfg, dict):
+            self.player.cfg["jump_velocity"] = self.cfg.get("jump_velocity", 17.0)
+            self.player.cfg["gravity"] = self.cfg.get("gravity", 55.0)
+        if hasattr(self.hud, "powerup_badge"):
+            self.hud.powerup_badge.text = ""
+
+        # Task 4: Record run in Student Leaderboard Backend
+        is_sandbox = not (
+            self.active_prompt_summary.lower().startswith("vanilla") or
+            "default" in self.active_prompt_summary.lower() or
+            "normal" in self.active_prompt_summary.lower()
+        )
+        entry = self.leaderboard.record_run(
+            student_name=self.student_name,
+            roll_number=self.roll_number,
+            score=score,
+            coins=self.coin_count,
+            distance=self.distance,
+            powerups_collected=dict(self.powerups_collected),
+            active_prompt_summary=self.active_prompt_summary,
+            is_sandbox=is_sandbox,
+        )
+
+        board_name = getattr(entry, "board_type", None) or (entry.get("board_type", "RANKED") if isinstance(entry, dict) else "RANKED")
+        board_entries = (
+            self.leaderboard.get_ranked_board()
+            if board_name == "RANKED" and hasattr(self.leaderboard, "get_ranked_board")
+            else (self.leaderboard.get_sandbox_board() if hasattr(self.leaderboard, "get_sandbox_board") else [])
+        )
+        entry_id = getattr(entry, "entry_id", None) or (entry.get("entry_id") if isinstance(entry, dict) else None)
+        rank = (entry.get("rank") if isinstance(entry, dict) and "rank" in entry else 1)
+        for idx, e in enumerate(board_entries, start=1):
+            e_id = getattr(e, "entry_id", None) or (e.get("entry_id") if isinstance(e, dict) else None)
+            if e_id and e_id == entry_id:
+                rank = idx
+                break
+
+        self.hud.sub.text = (
+            f"Score {score}    Coins {self.coin_count}    Best {self.best}\n"
+            f"Board: {board_name}  |  Rank: #{rank}  |  {self.student_name} ({self.roll_number})\n\n"
+            f"SPACE / JUMP: Retry    [L]: Leaderboard    [E]: Export CSV    [TAB]: Prompt"
+        )
+
+    def show_leaderboard_toast(self) -> None:
+        """Displays quick preview of top Ranked and Sandbox leaderboard records."""
+        ranked = self.leaderboard.get_ranked_board(limit=3)
+        sandbox = self.leaderboard.get_sandbox_board(limit=3)
+        r_str = " | ".join(f"#{i} {e.student_name}: {e.score}" for i, e in enumerate(ranked, 1)) or "No runs yet"
+        s_str = " | ".join(f"#{i} {e.student_name}: {e.score}" for i, e in enumerate(sandbox, 1)) or "No runs yet"
+        self.hud.show_toast(f"🏆 RANKED: {r_str}\n🧪 SANDBOX: {s_str}", 4.5)
+
+    def export_leaderboard_csv(self) -> None:
+        """Exports full class records and summaries to CSV."""
+        try:
+            csv_path = self.leaderboard.export_to_csv()
+            roster_path = self.leaderboard.export_roster_summary_csv()
+            self.hud.show_toast(f"Exported to {csv_path.name} & {roster_path.name}!", 3.5)
+        except Exception as ex:
+            self.hud.show_toast(f"Export failed: {ex}", 3.0)
 
     def toggle_pause(self) -> None:
         if self.state in (STATE_PLAYING, STATE_COUNTDOWN):
@@ -402,7 +528,7 @@ class Game(Entity):
     @property
     def score(self) -> int:
         mult = 2 if self.powerup_timers.get("multiplier", 0.0) > 0 else 1
-        raw_score = int(self.distance * self.cfg["score_per_meter"]) * mult + self.coin_count * 10 + self.bonus_score
+        raw_score = int(self.distance * self.cfg.get("score_per_meter", 1.0)) * mult + self.coin_count * 10 + self.bonus_score
         return max(0, raw_score)
 
     # --- game_events dispatcher helpers (on_jump, on_roll, on_frame, on_lane_change) --
@@ -492,6 +618,14 @@ class Game(Entity):
         if self.state == STATE_PROMPT:
             if hasattr(self, "prompt_ui") and self.prompt_ui and self.prompt_ui.is_active:
                 self.prompt_ui.handle_input(key)
+            return
+
+        if key == "l":
+            self.show_leaderboard_toast()
+            return
+
+        if key == "e":
+            self.export_leaderboard_csv()
             return
 
         if self.state == STATE_OVER:
@@ -588,13 +722,16 @@ class Game(Entity):
                     if self.powerup_timers[k] <= 0:
                         self.powerup_timers[k] = 0.0
                         if k == "hoverboard":
-                            self.player.set_hoverboard_active(False)
+                            if hasattr(self.player, "set_hoverboard_active"):
+                                self.player.set_hoverboard_active(False)
                         elif k == "jetpack":
-                            self.player.set_jetpack_active(False)
+                            if hasattr(self.player, "set_jetpack_active"):
+                                self.player.set_jetpack_active(False)
                             self._jetpack_descending = True
                         elif k == "sneakers":
-                            self.player.cfg["jump_velocity"] = self.cfg.get("jump_velocity", 15.0)
-                            self.player.cfg["gravity"] = self.cfg.get("gravity", 36.0)
+                            if hasattr(self.player, "cfg") and isinstance(self.player.cfg, dict):
+                                self.player.cfg["jump_velocity"] = self.cfg.get("jump_velocity", 17.0)
+                                self.player.cfg["gravity"] = self.cfg.get("gravity", 55.0)
                         self.hud.show_toast(f"{k.upper()} EXPIRED", 1.5)
                         if self._game_dispatcher and _GAME_EVENTS_AVAILABLE:
                             self._game_dispatcher.emit_powerup(k, 0.0, started=False)
@@ -616,28 +753,38 @@ class Game(Entity):
             if self.powerup_timers["magnet"] > 0:
                 self.obstacles.attract_coins(self.player.x, 0.0, range_dist=14.0)
 
-            if self.powerup_timers["sneakers"] > 0:
-                self.player.cfg["jump_velocity"] = 26.0
-                self.player.cfg["gravity"] = self.cfg.get("gravity", 36.0) * 0.55
-            else:
-                self.player.cfg["jump_velocity"] = self.cfg.get("jump_velocity", 15.0)
-                self.player.cfg["gravity"] = self.cfg.get("gravity", 36.0)
+            if hasattr(self.player, "cfg") and isinstance(self.player.cfg, dict):
+                if self.powerup_timers["sneakers"] > 0:
+                    self.player.cfg["jump_velocity"] = 22.5
+                    self.player.cfg["gravity"] = self.cfg.get("gravity", 55.0)
+                else:
+                    self.player.cfg["jump_velocity"] = self.cfg.get("jump_velocity", 17.0)
+                    self.player.cfg["gravity"] = self.cfg.get("gravity", 55.0)
 
             mult_val = 2 if self.powerup_timers["multiplier"] > 0 else 1
-            self.hud.multiplier.text = f"x{mult_val}"
+            if hasattr(self.hud, "multiplier"):
+                self.hud.multiplier.text = f"x{mult_val}"
 
             # Visual glow states & badges with countdown seconds
-            active_badges = []
-            for k, v in self.powerup_timers.items():
-                if v > 0:
-                    icon = {"jetpack": "🚀", "magnet": "🧲", "sneakers": "👟", "multiplier": "✖️2", "hoverboard": "🛹", "shield": "🛡️"}.get(k, "⚡")
-                    active_badges.append(f"{icon} {k.upper()} {v:.0f}s")
-            if self._hoverboard_invincible_timer > 0:
-                active_badges.append(f"✨ INVINCIBLE {self._hoverboard_invincible_timer:.1f}s")
-            if active_badges:
-                self.hud.powerup_badge.text = " | ".join(active_badges)
-            else:
-                self.hud.powerup_badge.text = ""
+            if hasattr(self.hud, "powerup_badge"):
+                active_badges = []
+                for k, v in self.powerup_timers.items():
+                    if v > 0:
+                        icon = {
+                            "jetpack": "[JETPACK]",
+                            "magnet": "[MAGNET]",
+                            "sneakers": "[SNEAKERS]",
+                            "multiplier": "[2X]",
+                            "hoverboard": "[HOVERBOARD]",
+                            "shield": "[SHIELD]",
+                        }.get(k, "[POWERUP]")
+                        active_badges.append(f"{icon} {v:.0f}s")
+                if self._hoverboard_invincible_timer > 0:
+                    active_badges.append(f"[INVINCIBLE] {self._hoverboard_invincible_timer:.1f}s")
+                if active_badges:
+                    self.hud.powerup_badge.text = " | ".join(active_badges)
+                else:
+                    self.hud.powerup_badge.text = ""
 
             self.speed = min(self.cfg["max_speed"], self.speed + self.cfg["speed_increase_per_second"] * dt)
             self.distance += self.speed * dt
@@ -691,6 +838,7 @@ class Game(Entity):
         # Check collision with power-up tokens
         for p_up in list(self.obstacles.powerups):
             if abs(p_up.x - p.x) < 0.9 and abs(p_up.z) < 0.8 and p.bottom - 0.4 < p_up.y < p.top + 0.5:
+                self.obstacles.spawn_pickup_cue((p_up.x, p_up.y, p_up.z), p_up.kind)
                 self.activate_powerup(p_up.kind)
                 self.obstacles.powerups.remove(p_up)
                 from ursina import destroy
@@ -779,7 +927,18 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--no-vision", action="store_true", help="disable camera gesture tracking, play with keyboard only")
     parser.add_argument("--camera", type=int, default=0, help="camera device index")
     parser.add_argument("--llm-prompt", type=str, default=None, help="LLM Game Logic Synthesizer rule prompt (e.g. 'shockwave', 'reverse_trains', 'survival', 'floor_is_lava')")
+    parser.add_argument("--student-name", type=str, default="Jake", help="student name for leaderboard persistence")
+    parser.add_argument("--roll-number", type=str, default="SUB-001", help="student roll number for leaderboard persistence")
+    parser.add_argument("--export-leaderboard", action="store_true", help="export complete student leaderboard to CSV and exit")
     args, _ = parser.parse_known_args(argv)
+
+    if args.export_leaderboard:
+        from game.leaderboard import LeaderboardBackend
+        backend = LeaderboardBackend()
+        csv_file = backend.export_to_csv()
+        roster_file = backend.export_roster_summary_csv()
+        print(f"Exported leaderboard files:\n  1. {csv_file}\n  2. {roster_file}")
+        return
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
     app = Ursina(title=TITLE, borderless=False, size=(520, 920),
@@ -793,6 +952,7 @@ def main(argv: list[str] | None = None) -> None:
     sun.look_at((0, 0, 10))
     AmbientLight(color=color.rgb(195, 200, 215))
 
-    Game(seed=args.seed, llm_prompt=args.llm_prompt)
+    Game(seed=args.seed, llm_prompt=args.llm_prompt,
+         student_name=args.student_name, roll_number=args.roll_number)
     app.run()
 

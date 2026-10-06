@@ -132,3 +132,72 @@ def make_corrugated_strip_mesh(width: float = 2.2, height: float = 3.0, length: 
         tris.append((p1, p3, p2))
 
     return Mesh(vertices=verts, triangles=tris, uvs=uvs, mode="triangle")
+
+
+def make_horseshoe_magnet_mesh(radius: float = 0.45, inner_radius: float = 0.25, thickness: float = 0.14, segments: int = 12) -> Mesh:
+    """Creates a 3D U-shaped horseshoe magnet mesh."""
+    verts: list[Vec3] = []
+    tris: list[tuple[int, int, int]] = []
+    uvs: list[Vec2] = []
+
+    half_th = thickness / 2.0
+    # U-arch from 0 to pi (half circle open downwards) plus straight legs
+    # Angles from 0 to pi
+    for side, z in enumerate((half_th, -half_th)):
+        base_idx = len(verts)
+        # Inner and outer curve vertices
+        for i in range(segments + 1):
+            theta = math.pi * (i / segments)
+            cos_t = math.cos(theta)
+            sin_t = math.sin(theta)
+
+            # Outer point
+            xo = cos_t * radius
+            yo = sin_t * radius
+            verts.append(Vec3(xo, yo, z))
+            uvs.append(Vec2(0.5 + 0.5 * cos_t, 0.5 + 0.5 * sin_t))
+
+            # Inner point
+            xi = cos_t * inner_radius
+            yi = sin_t * inner_radius
+            verts.append(Vec3(xi, yi, z))
+            uvs.append(Vec2(0.5 + 0.3 * cos_t, 0.5 + 0.3 * sin_t))
+
+        # Triangles for the curved face
+        for i in range(segments):
+            o0 = base_idx + i * 2
+            i0 = base_idx + i * 2 + 1
+            o1 = base_idx + (i + 1) * 2
+            i1 = base_idx + (i + 1) * 2 + 1
+            if side == 0:
+                tris.append((o0, o1, i0))
+                tris.append((i0, o1, i1))
+            else:
+                tris.append((o0, i0, o1))
+                tris.append((i0, i1, o1))
+
+    # Connect front and back rims
+    num_pts_per_side = (segments + 1) * 2
+    for i in range(segments):
+        # Outer rim
+        f_o0 = i * 2
+        f_o1 = (i + 1) * 2
+        b_o0 = num_pts_per_side + i * 2
+        b_o1 = num_pts_per_side + (i + 1) * 2
+        tris.append((f_o0, b_o0, f_o1))
+        tris.append((f_o1, b_o0, b_o1))
+
+        # Inner rim
+        f_i0 = i * 2 + 1
+        f_i1 = (i + 1) * 2 + 1
+        b_i0 = num_pts_per_side + i * 2 + 1
+        b_i1 = num_pts_per_side + (i + 1) * 2 + 1
+        tris.append((f_i0, f_i1, b_i0))
+        tris.append((f_i1, b_i1, b_i0))
+
+    return Mesh(vertices=verts, triangles=tris, uvs=uvs, mode="triangle")
+
+
+def make_star_2x_mesh(radius: float = 0.48, thickness: float = 0.14) -> Mesh:
+    """Creates a 3D star token with an embossed profile."""
+    return make_star_coin_mesh(radius=radius, thickness=thickness, points=5)

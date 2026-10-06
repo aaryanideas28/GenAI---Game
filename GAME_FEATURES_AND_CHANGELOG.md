@@ -120,9 +120,45 @@ A multi-layer security and stability system protecting LLM rule generation:
 
 ---
 
+## 🏆 Task 4: Track Collectibles Spawner & Student Leaderboard Backend (`game/leaderboard.py`)
+
+A persistent database backend, spawner, and anti-tamper security architecture:
+
+1. **3D Power-Up Collectibles Spawner (`game/obstacles.py` & `game/models3d.py`)**:
+   - Dedicated 3D procedural collectible models for all 6 items:
+     - **Magnet Horseshoe**: 3D U-curved red magnet with dual silver pole caps.
+     - **Jetpack Rocket Cylinder**: Twin booster cylinders, metal nose cones, and exhaust thrusters.
+     - **Super Sneaker Shoe**: 3D high-top sneaker with rubber sole, shoe upper, and ankle collar.
+     - **2X Multiplier Star**: 3D 5-pointed star token with golden halo and red accent disc.
+     - **Hoverboard Box / Deck**: Aerodynamic hover deck with neon blue edge rails and repulsor pads.
+     - **Shield / Headstart**: Cyan energy aegis with protective boss.
+   - Dynamic floating bobbing oscillation and pulsing aura rings.
+   - Collision detection triggers expanding 3D visual burst cues (`PickupVisualCue`), audio cues, informs Task 3 (`activate_powerup`), and increments session power-up tallies.
+
+2. **Student Score Persistence & Atomic I/O**:
+   - Persists student name, roll number, score, coins, distance, detailed power-up breakdown, active prompt summary, and timestamps.
+   - **Atomic Write Strategy**: Uses temporary files with filesystem flush and atomic `os.replace` to prevent corruption during unexpected game closures.
+   - Automatic `.bak` backup creation before write commits with automatic corruption recovery.
+
+3. **Dual Leaderboard Segregation**:
+   - **Ranked Board**: Verified scores from fair skill, unmodded gameplay.
+   - **Sandbox Board**: Creative, AI-synthesized rule runs (e.g. Shockwave roll, Floor is lava).
+
+4. **Anti-Tamper Verification & Checksum Security**:
+   - Computes HMAC-SHA256 signatures for every record to prevent manual file tampering.
+   - Validates physics plausibility against distance and coin limits. Demotes or flags suspicious submissions.
+
+5. **Teacher Export Tools**:
+   - One-click CSV export (`export_to_csv()`) for grading with ranking, student name, roll number, and power-up tallies.
+   - Aggregated Class Roster Summary (`export_roster_summary_csv()`) providing single-entry-per-student views with personal bests.
+   - Class statistics reporting (`get_class_statistics()`) with averages, high scores, and popular power-ups.
+   - In-game keyboard shortcut <kbd>E</kbd> or CLI flag `--export-leaderboard` for instant CSV export.
+
+---
+
 ## 🧪 Automated Unit Test Suite
 
-The project features **85 passing unit tests** across 10 specialized test modules:
+The project features **114 passing unit tests** across 12 specialized test modules:
 
 To execute tests:
 ```bash
@@ -130,6 +166,8 @@ python -m pytest tests/
 ```
 
 ### Key Test Files:
+- `tests/test_leaderboard_and_spawner.py`: Verified atomic persistence, dual board segregation, anti-tamper HMAC verification, CSV teacher exports, class metrics, and 3D collectible spawner/pickup cues.
+- `tests/test_powerups_and_guardrail.py`: Verified all 6 power-ups, stackability, event hooks, and Pydantic parameter guardrails.
 - `tests/test_guardrails.py`: Verified prompt injection defense, AST dunder validation, safety clamping, and runtime revocation.
 - `tests/test_prompt_ui.py`: Verified start Prompt UI layout, preset selection, submission, and game start transitions.
 - `tests/test_world_reset.py`: Verified track chunk and tunnel portal position resets on restart.
@@ -158,3 +196,5 @@ python -m pytest tests/
 - **`C`**: Calibrate Posture
 - **`R`**: Quick Restart after Crash
 - **`Tab`**: Reopen AI Prompt Modifier Dialog
+- **`L`**: In-Game Leaderboard Preview (Ranked & Sandbox)
+- **`E`**: One-Click Export Leaderboard to CSV
