@@ -1,7 +1,7 @@
 {
   "version": "1.0",
-  "last_updated": "2026-10-06T07:58:05.153263+00:00",
-  "total_records": 23,
+  "last_updated": "2026-10-06T18:09:51.750011+00:00",
+  "total_records": 30,
   "entries": [
     {
       "entry_id": "RUN-1791270607622-f73e91",
@@ -531,6 +531,167 @@
       "verified": true,
       "verification_status": "VERIFIED",
       "checksum": "6bb03fee64655bb6cf950b76717e6e0e42176462e21335e5c7efab9ff86e4440"
+    },
+    {
+      "entry_id": "RUN-1791297164167-d52df6",
+      "student_name": "Jake",
+      "roll_number": "SUB-001",
+      "score": 22,
+      "coins": 0,
+      "distance": 23.0,
+      "powerups_collected": {
+        "jetpack": 0,
+        "magnet": 0,
+        "sneakers": 0,
+        "multiplier": 0,
+        "hoverboard": 0,
+        "shield": 0
+      },
+      "total_powerups": 0,
+      "active_prompt_summary": "Floor is Lava Mode: Jumping onto train roofs is mandatory; running on ground for 1.5s causes crash",
+      "board_type": "SANDBOX",
+      "timestamp": "2026-10-06T14:32:44.167649+00:00",
+      "verified": true,
+      "verification_status": "VERIFIED",
+      "checksum": "8d0a8935e47d8f8d994aece1581613aeaa678bbc932c7da3c39c26b030376f7d"
+    },
+    {
+      "entry_id": "RUN-1791297340508-303150",
+      "student_name": "Jake",
+      "roll_number": "SUB-001",
+      "score": 934,
+      "coins": 48,
+      "distance": 455.0,
+      "powerups_collected": {
+        "jetpack": 0,
+        "magnet": 0,
+        "sneakers": 1,
+        "multiplier": 0,
+        "hoverboard": 0,
+        "shield": 0
+      },
+      "total_powerups": 1,
+      "active_prompt_summary": "Shockwave Roll Mode: Every time Jake rolls, emit a shockwave that clears obstacles in his lane",
+      "board_type": "SANDBOX",
+      "timestamp": "2026-10-06T14:35:40.508904+00:00",
+      "verified": true,
+      "verification_status": "VERIFIED",
+      "checksum": "cfe8aaec39cdbaa1e19ee675e6f895e4b31ed3cce18aec960c1309840747553f"
+    },
+    {
+      "entry_id": "RUN-1791300106461-bb2ba6",
+      "student_name": "Jake",
+      "roll_number": "SUB-001",
+      "score": 159,
+      "coins": 0,
+      "distance": 159.1,
+      "powerups_collected": {
+        "jetpack": 0,
+        "magnet": 0,
+        "sneakers": 0,
+        "multiplier": 0,
+        "hoverboard": 0,
+        "shield": 0
+      },
+      "total_powerups": 0,
+      "active_prompt_summary": "Shockwave Roll Mode: Every time Jake rolls, emit a shockwave that clears obstacles in his lane",
+      "board_type": "SANDBOX",
+      "timestamp": "2026-10-06T15:21:46.465634+00:00",
+      "verified": true,
+      "verification_status": "VERIFIED",
+      "checksum": "59d1190d69451bf3e09393dd63fddd7046114f08a469fed4702d1ed46a17c3bc"
+    },
+    {
+      "entry_id": "RUN-1791305973752-04ba72",
+      "student_name": "Jake",
+      "roll_number": "N/A",
+      "score": 4869,
+      "coins": 271,
+      "distance": 2159.0,
+      "powerups_collected": {
+        "jetpack": 1,
+        "magnet": 1,
+        "sneakers": 3,
+        "multiplier": 1,
+        "hoverboard": 0,
+        "shield": 4
+      },
+      "total_powerups": 10,
+      "active_prompt_summary": "Vanilla / Default Rules",
+      "board_type": "RANKED",
+      "timestamp": "2026-10-06T16:59:33.755523+00:00",
+      "verified": true,
+      "verification_status": "VERIFIED",
+      "checksum": "92d8f9397a1ca71d41d91f6a434edddcef27ec492f01f63676e9615975d0938d"
+    },
+    {
+      "entry_id": "RUN-1791307824875-6ff4e7",
+      "student_name": "Aarya",
+      "roll_number": "N/A",
+      "score": 3059,
+      "coins": 170,
+      "distance": 1359.4,
+      "powerups_collected": {
+        "jetpack": 1,
+        "magnet": 1,
+        "sneakers": 0,
+        "multiplier": 2,
+        "hoverboard": 1,
+        "shield": 0
+      },
+      "total_powerups": 5,
+      "active_prompt_summary": "Shockwave Roll Mode: Every time Jake rolls, emit a shockwave that clears obstacles in his lane",
+      "board_type": "SANDBOX",
+      "timestamp": "2026-10-06T17:30:24.878501+00:00",
+      "verified": true,
+      "verification_status": "VERIFIED",
+      "checksum": "73f41331700ab7dd21b4bbcce30d824bcd78a81e4508303a3ffc0058148bb968"
+    },
+    {
+      "entry_id": "RUN-1791308710135-6f082d",
+      "student_name": "Aarya",
+      "roll_number": "N/A",
+      "score": 332,
+      "coins": 9,
+      "distance": 242.1,
+      "powerups_collected": {
+        "jetpack": 0,
+        "magnet": 0,
+        "sneakers": 0,
+        "multiplier": 0,
+        "hoverboard": 0,
+        "shield": 0
+      },
+      "total_powerups": 0,
+      "active_prompt_summary": "Vanilla / Default Rules",
+      "board_type": "RANKED",
+      "timestamp": "2026-10-06T17:45:10.136263+00:00",
+      "verified": true,
+      "verification_status": "VERIFIED",
+      "checksum": "a2f713ab8ddb557520fd094db62161d73d5c8e0c96b2ffde8025ef6a257268de"
+    },
+    {
+      "entry_id": "RUN-1791310191746-15734f",
+      "student_name": "aari",
+      "roll_number": "N/A",
+      "score": 22,
+      "coins": 0,
+      "distance": 23.0,
+      "powerups_collected": {
+        "jetpack": 0,
+        "magnet": 0,
+        "sneakers": 0,
+        "multiplier": 0,
+        "hoverboard": 0,
+        "shield": 0
+      },
+      "total_powerups": 0,
+      "active_prompt_summary": "Floor is Lava Mode: Jumping onto train roofs is mandatory; running on ground for 1.5s causes crash",
+      "board_type": "SANDBOX",
+      "timestamp": "2026-10-06T18:09:51.747637+00:00",
+      "verified": true,
+      "verification_status": "VERIFIED",
+      "checksum": "900aafcbce6fdcc9f42d5f80091d3f360ed8bfdc5f251204a0ab091d367ff159"
     }
   ]
 }

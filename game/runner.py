@@ -28,6 +28,13 @@ from game.player import Player
 from game.world import World
 from game.llm_synthesizer import LLMGameLogicSynthesizer, LogicRuleExecutor, BehavioralLogicPackage
 from game.prompt_ui import PromptUI
+from game.interactive_ui import (
+    InGamePromptConsole,
+    PowerUpHudBadges,
+    ArcadeEntryModal,
+    LeaderboardModal,
+    PRESETS_INGAME,
+)
 
 # --------------------------------------------------------------------------
 # Game Event Dispatcher — typed on_jump / on_roll / on_frame / on_coin hooks
@@ -62,6 +69,7 @@ CAMERA_OFFSET = (0, 3.4, -4.5)
 CAMERA_PITCH = 16
 
 STATE_PROMPT, STATE_MENU, STATE_COUNTDOWN, STATE_PLAYING, STATE_PAUSED, STATE_OVER = "prompt", "menu", "countdown", "playing", "paused", "over"
+STATE_CONSOLE, STATE_LEADERBOARD, STATE_ARCADE_ENTRY = "console", "leaderboard", "arcade_entry"
 
 
 def _load_best() -> int:
@@ -79,16 +87,49 @@ def _save_best(best: int) -> None:
 
 
 class Hud:
-    """Mobile Subway Surfers style HUD with pause button, multiplier, score, and coins."""
-    def __init__(self) -> None:
+    """Mobile Subway Surfers style HUD with pause button, multiplier, score, coins, and Task 5 interactive badges."""
+    def __init__(self, game_ref: Any = None) -> None:
+        self.game = game_ref
+
         # Yellow pause button (top-left)
-        self.pause_bg = Entity(parent=camera.ui, model="quad", color=color.hex("#f6a800"),
-                               scale=(0.07, 0.07), position=(-0.42, 0.44))
-        self.pause_icon = Text("||", parent=self.pause_bg, origin=(0, 0), scale=18.0, color=color.black)
+        from ursina import Button
+        self.pause_bg = Button(
+            text="||",
+            parent=camera.ui,
+            scale=(0.065, 0.065),
+            position=(-0.42, 0.44),
+            color=color.hex("#f6a800"),
+            highlight_color=color.hex("#ffb81a"),
+            text_color=color.black,
+        )
+        self.pause_bg.on_click = self._on_pause_click
+        self.pause_icon = None
+
+        # Task 5: In-Game AI Prompt Console HUD Button (top-left next to pause)
+        self.ai_btn = Button(
+            text="⚡ AI [/]",
+            parent=camera.ui,
+            scale=(0.11, 0.045),
+            position=(-0.29, 0.44),
+            color=color.hex("#7c3aed"),
+            highlight_color=color.hex("#8b5cf6"),
+        )
+        self.ai_btn.on_click = self._on_ai_click
 
         # Multiplier badge + Score (top-center)
         self.multiplier = Text("x1", origin=(1, 0), position=(-0.04, 0.44), scale=2.4, color=color.hex("#38e028"))
         self.score = Text("000000", origin=(-1, 0), position=(-0.02, 0.44), scale=2.4, color=color.white)
+
+        # Task 5: Interactive Leaderboard HUD Button (top-right before coins)
+        self.lb_btn = Button(
+            text="🏆 [L]",
+            parent=camera.ui,
+            scale=(0.09, 0.045),
+            position=(0.20, 0.44),
+            color=color.hex("#2563eb"),
+            highlight_color=color.hex("#3b82f6"),
+        )
+        self.lb_btn.on_click = self._on_lb_click
 
         # Coins badge (top-right)
         self.coin_bg = Entity(parent=camera.ui, model="circle", color=color.hex("#ffc400"),
@@ -102,12 +143,30 @@ class Hud:
         self.powerup_badge = Text("", origin=(-1, 0), position=(-0.44, -0.42), scale=1.4, color=color.hex("#ffea00"))
         self.toast_timer = 0.0
 
+        # Task 5: Mobile-style Power-up countdown badges with bar progress indicators
+        self.powerup_hud_badges = PowerUpHudBadges(parent_ui=camera.ui)
+
         # 3-second countdown counter centered directly above player's head (scale ~6.5 = 1/8 screen height)
         self.countdown = Text("", origin=(0, 0), y=0.22, scale=6.5, color=color.white)
 
         for t in (self.score, self.multiplier, self.coins, self.center, self.sub, self.toast, self.powerup_badge, self.countdown):
             t.background = False
 
+    def _on_pause_click(self) -> None:
+        if self.game and hasattr(self.game, "toggle_pause"):
+            self.game.toggle_pause()
+
+    def _on_ai_click(self) -> None:
+        if self.game and hasattr(self.game, "open_prompt_console"):
+            self.game.open_prompt_console()
+
+    def _on_lb_click(self) -> None:
+        if self.game and hasattr(self.game, "open_leaderboard_modal"):
+            self.game.open_leaderboard_modal()
+
+    def update_powerups(self, powerup_timers: dict[str, float], invincible_timer: float = 0.0) -> None:
+        if hasattr(self, "powerup_hud_badges") and self.powerup_hud_badges:
+            self.powerup_hud_badges.update_badges(powerup_timers, invincible_timer)
 
     def show_toast(self, msg: str, seconds: float = 2.5) -> None:
         self.toast.text = msg
@@ -142,7 +201,7 @@ class Game(Entity):
         self.player = Player(self.cfg)
         self.inspector = Inspector(self.player)
         self.obstacles = ObstacleManager(self.cfg, seed)
-        self.hud = Hud()
+        self.hud = Hud(self)
         self.rng = random.Random(seed)
 
         self.synthesizer = LLMGameLogicSynthesizer()
@@ -181,7 +240,25 @@ class Game(Entity):
         camera.rotation_x = CAMERA_PITCH
         camera.fov = 70
 
+        # Task 1 Start Prompt UI
         self.prompt_ui = PromptUI(self, on_start=self._on_prompt_start)
+
+        # Task 5 Interactive Modals:
+        self.console = InGamePromptConsole(
+            self,
+            on_apply=self._on_console_apply,
+            on_close=self._on_console_close,
+        )
+        self.leaderboard_modal = LeaderboardModal(
+            self,
+            on_close=self._on_leaderboard_close,
+        )
+        self.arcade_modal = ArcadeEntryModal(
+            self,
+            on_submit=self._on_arcade_submit,
+            on_skip=self._on_arcade_skip,
+        )
+
         self.show_prompt_ui(default_prompt=llm_prompt)
 
     def activate_powerup(self, kind: str) -> None:
@@ -377,6 +454,8 @@ class Game(Entity):
         self.hud.countdown.text = "3"
         if hasattr(self.hud, "powerup_badge"):
             self.hud.powerup_badge.text = ""
+        if hasattr(self.hud, "powerup_hud_badges"):
+            self.hud.powerup_hud_badges.clear()
 
     def start(self) -> None:
         """Alias for start_from_menu."""
@@ -425,6 +504,14 @@ class Game(Entity):
         self.hud.center.text = ""
         self.hud.sub.text = ""
         self.hud.countdown.text = ""
+        if hasattr(self, "arcade_modal") and self.arcade_modal and self.arcade_modal.is_active:
+            self.arcade_modal.hide()
+        if hasattr(self, "console") and self.console and self.console.is_active:
+            self.console.close()
+        if hasattr(self, "leaderboard_modal") and self.leaderboard_modal and self.leaderboard_modal.is_active:
+            self.leaderboard_modal.close()
+        if hasattr(self.hud, "powerup_hud_badges"):
+            self.hud.powerup_hud_badges.clear()
         if hasattr(self.hud, "powerup_badge"):
             self.hud.powerup_badge.text = ""
         if hasattr(self.hud, "toast"):
@@ -459,16 +546,50 @@ class Game(Entity):
             self.player.cfg["gravity"] = self.cfg.get("gravity", 55.0)
         if hasattr(self.hud, "powerup_badge"):
             self.hud.powerup_badge.text = ""
+        if hasattr(self.hud, "powerup_hud_badges"):
+            self.hud.powerup_hud_badges.clear()
 
-        # Task 4: Record run in Student Leaderboard Backend
+        # Task 5: Pop up arcade entry dialog upon crashing
+        if hasattr(self, "arcade_modal") and self.arcade_modal:
+            try:
+                self.state = STATE_ARCADE_ENTRY
+                self.arcade_modal.show(
+                    default_name=self.student_name,
+                    score=score,
+                    coins=self.coin_count,
+                    distance=self.distance,
+                    prompt_summary=self.active_prompt_summary,
+                )
+            except Exception as e:
+                logger.error(f"Failed to display arcade modal: {e}", exc_info=True)
+                self._record_run_and_display_results(self.student_name, "", score)
+        else:
+            self._record_run_and_display_results(self.student_name, "", score)
+
+    def _on_arcade_submit(self, name: str, roll: str = "") -> None:
+        """Called when student submits their details in the arcade entry dialog."""
+        self.student_name = name
+        entry = self._record_run_and_display_results(name, "", self.score)
+        entry_id = getattr(entry, "entry_id", None) or (entry.get("entry_id") if isinstance(entry, dict) else None)
+        if hasattr(self, "leaderboard_modal") and self.leaderboard_modal:
+            self.open_leaderboard_modal(new_entry_id=entry_id)
+
+    def _on_arcade_skip(self) -> None:
+        """Called when student skips arcade submission."""
+        self._record_run_and_display_results(self.student_name, "", self.score)
+
+    def _record_run_and_display_results(self, name: str, roll: str, score: int) -> LeaderboardEntry:
+        """Records run into leaderboard backend and updates Game Over HUD display."""
+        self.state = STATE_OVER
+        self.state_time = 0.0
         is_sandbox = not (
             self.active_prompt_summary.lower().startswith("vanilla") or
             "default" in self.active_prompt_summary.lower() or
             "normal" in self.active_prompt_summary.lower()
         )
         entry = self.leaderboard.record_run(
-            student_name=self.student_name,
-            roll_number=self.roll_number,
+            student_name=name,
+            roll_number=roll or "N/A",
             score=score,
             coins=self.coin_count,
             distance=self.distance,
@@ -477,25 +598,71 @@ class Game(Entity):
             is_sandbox=is_sandbox,
         )
 
-        board_name = getattr(entry, "board_type", None) or (entry.get("board_type", "RANKED") if isinstance(entry, dict) else "RANKED")
-        board_entries = (
-            self.leaderboard.get_ranked_board()
-            if board_name == "RANKED" and hasattr(self.leaderboard, "get_ranked_board")
-            else (self.leaderboard.get_sandbox_board() if hasattr(self.leaderboard, "get_sandbox_board") else [])
+        all_entries = (
+            self.leaderboard.get_all_entries()
+            if hasattr(self.leaderboard, "get_all_entries")
+            else []
         )
         entry_id = getattr(entry, "entry_id", None) or (entry.get("entry_id") if isinstance(entry, dict) else None)
         rank = (entry.get("rank") if isinstance(entry, dict) and "rank" in entry else 1)
-        for idx, e in enumerate(board_entries, start=1):
+        for idx, e in enumerate(all_entries, start=1):
             e_id = getattr(e, "entry_id", None) or (e.get("entry_id") if isinstance(e, dict) else None)
             if e_id and e_id == entry_id:
                 rank = idx
                 break
 
         self.hud.sub.text = (
-            f"Score {score}    Coins {self.coin_count}    Best {self.best}\n"
-            f"Board: {board_name}  |  Rank: #{rank}  |  {self.student_name} ({self.roll_number})\n\n"
-            f"SPACE / JUMP: Retry    [L]: Leaderboard    [E]: Export CSV    [TAB]: Prompt"
+            f"SCORE {score:,}    COINS {self.coin_count}    BEST {self.best:,}\n"
+            f"LEADERBOARD RANK: #{rank}  |  PLAYER: {name.upper()}\n\n"
+            f"[SPACE / JUMP] RETRY          [L] LEADERBOARD\n\n"
+            f"[/] AI PROMPT                [E] EXPORT CSV"
         )
+        self.hud.sub.scale = 1.65
+        self.hud.sub.y = -0.10
+        self.hud.sub.font = "VeraMono.ttf" if hasattr(Text, "default_font") else None
+        return entry
+
+    # -------------------------------------------------------------------------
+    # Task 5: In-Game AI Prompt Console & Interactive Leaderboard Openers
+    # -------------------------------------------------------------------------
+    def open_prompt_console(self) -> None:
+        """Opens in-game AI prompt command bar console and pauses gameplay."""
+        if hasattr(self, "console") and self.console:
+            if not self.console.is_active:
+                self._prev_state = self.state
+                self.state = STATE_CONSOLE
+                self.console.show()
+
+    def _on_console_apply(self, prompt: str) -> None:
+        """Called when user applies prompt from the in-game command bar."""
+        package = self.apply_llm_prompt(prompt)
+        if package.title in ("Prompt Blocked", "Prompt Blocked by Guardrail"):
+            feedback = f"Guardrail: {package.summary}"
+        elif "vanilla" in prompt.lower() or "default" in prompt.lower() or not prompt.strip():
+            feedback = "Default Rules active — Fair Play (Ranked Mode)"
+        else:
+            feedback = f"Generated {package.title} logic active — Sandbox Mode flagged"
+        self.hud.show_toast(feedback, 3.5)
+        self.state = getattr(self, "_prev_state", STATE_PLAYING)
+
+    def _on_console_close(self) -> None:
+        """Resumes game or returns to previous screen after closing in-game console."""
+        self.state = getattr(self, "_prev_state", STATE_PLAYING)
+
+    def open_leaderboard_modal(self, initial_tab: str = "ALL", new_entry_id: Optional[str] = None) -> None:
+        """Opens interactive unified leaderboard modal."""
+        if hasattr(self, "leaderboard_modal") and self.leaderboard_modal:
+            if not self.leaderboard_modal.is_active:
+                self._prev_state = self.state
+                self.state = STATE_LEADERBOARD
+                if new_entry_id is not None:
+                    self.leaderboard_modal.show(initial_tab=initial_tab, new_entry_id=new_entry_id)
+                else:
+                    self.leaderboard_modal.show(initial_tab=initial_tab)
+
+    def _on_leaderboard_close(self) -> None:
+        """Resumes game or returns to previous screen after closing leaderboard modal."""
+        self.state = getattr(self, "_prev_state", STATE_PLAYING)
 
     def show_leaderboard_toast(self) -> None:
         """Displays quick preview of top Ranked and Sandbox leaderboard records."""
@@ -615,13 +782,35 @@ class Game(Entity):
 
 
     def input(self, key: str) -> None:
+        # Route input to active modals
         if self.state == STATE_PROMPT:
             if hasattr(self, "prompt_ui") and self.prompt_ui and self.prompt_ui.is_active:
                 self.prompt_ui.handle_input(key)
             return
 
+        if self.state == STATE_CONSOLE:
+            if hasattr(self, "console") and self.console and self.console.is_active:
+                self.console.handle_input(key)
+            return
+
+        if self.state == STATE_LEADERBOARD:
+            if hasattr(self, "leaderboard_modal") and self.leaderboard_modal and self.leaderboard_modal.is_active:
+                self.leaderboard_modal.handle_input(key)
+            return
+
+        if self.state == STATE_ARCADE_ENTRY:
+            if hasattr(self, "arcade_modal") and self.arcade_modal and self.arcade_modal.is_active:
+                self.arcade_modal.handle_input(key)
+            return
+
+        # Task 5: In-Game AI Prompt Console shortcut (/ or T)
+        if key in ("/", "t"):
+            self.open_prompt_console()
+            return
+
+        # Task 5: Interactive Leaderboard shortcut (L)
         if key == "l":
-            self.show_leaderboard_toast()
+            self.open_leaderboard_modal()
             return
 
         if key == "e":
@@ -710,6 +899,15 @@ class Game(Entity):
         self._check_config(dt)
         self.hud.tick(dt)
 
+        if self.state == STATE_CONSOLE and hasattr(self, "console") and self.console:
+            self.console.tick(dt)
+
+        if self.state == STATE_ARCADE_ENTRY and hasattr(self, "arcade_modal") and self.arcade_modal:
+            self.arcade_modal.tick(dt)
+
+        if self.state == STATE_LEADERBOARD and hasattr(self, "leaderboard_modal") and self.leaderboard_modal:
+            self.leaderboard_modal.tick(dt)
+
         if self.state == STATE_PLAYING:
             # Tick hoverboard post-crash invincibility
             if self._hoverboard_invincible_timer > 0:
@@ -785,6 +983,10 @@ class Game(Entity):
                     self.hud.powerup_badge.text = " | ".join(active_badges)
                 else:
                     self.hud.powerup_badge.text = ""
+
+            # Task 5: Mobile-style Power-up countdown badges with bar progress indicators
+            if hasattr(self.hud, "update_powerups"):
+                self.hud.update_powerups(self.powerup_timers, self._hoverboard_invincible_timer)
 
             self.speed = min(self.cfg["max_speed"], self.speed + self.cfg["speed_increase_per_second"] * dt)
             self.distance += self.speed * dt

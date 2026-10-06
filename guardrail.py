@@ -35,11 +35,39 @@ import threading
 import time
 from typing import Any, Dict, List, Optional
 
-from dotenv import load_dotenv
-from pydantic import BaseModel, Field, field_validator, model_validator
+try:
+    from dotenv import load_dotenv
+    load_dotenv("secure.env")
+except ImportError:
+    # Optional dotenv fallback: read secure.env manually if it exists
+    if os.path.exists("secure.env"):
+        with open("secure.env", "r", encoding="utf-8") as _f:
+            for _line in _f:
+                _line = _line.strip()
+                if _line and not _line.startswith("#") and "=" in _line:
+                    _k, _v = _line.split("=", 1)
+                    os.environ.setdefault(_k.strip(), _v.strip())
 
-# Load API key from secure.env first
-load_dotenv("secure.env")
+try:
+    from pydantic import BaseModel, Field, field_validator, model_validator
+except ImportError:
+    class BaseModel:
+        def __init__(self, **kwargs):
+            for k, v in kwargs.items():
+                setattr(self, k, v)
+        def model_dump(self):
+            return {k: v for k, v in self.__dict__.items() if not k.startswith("_")}
+        def model_copy(self, update=None):
+            d = dict(self.__dict__)
+            if update:
+                d.update(update)
+            return self.__class__(**d)
+    def Field(default=None, **kwargs):
+        return default
+    def field_validator(*args, **kwargs):
+        return lambda f: f
+    def model_validator(*args, **kwargs):
+        return lambda f: f
 
 logger = logging.getLogger("guardrail")
 

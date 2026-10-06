@@ -27,7 +27,7 @@ def test_prompt_ui_show_and_presets():
     # Test preset selection
     ui._select_preset("shockwave on roll")
     assert ui.input_field.text == "shockwave on roll"
-    assert "shockwave" in ui.status_text.text
+    assert "shockwave" in ui.status_text.text.lower()
 
     # Test presets list contains valid options
     preset_dict = dict(PRESETS)

@@ -156,9 +156,40 @@ A persistent database backend, spawner, and anti-tamper security architecture:
 
 ---
 
+## 🎨 Task 5: In-Game Interactive UI, HUD Timers & Leaderboard Modals (`game/interactive_ui.py`)
+
+A full interactive frontend UI and modal system:
+
+1. **In-Game AI Prompt Console (`InGamePromptConsole`)**:
+   - **Mid-Game Access**: Triggerable during gameplay via keyboard shortcut <kbd>/</kbd> or <kbd>T</kbd>, or by clicking the top-left HUD button <kbd>⚡ AI [/]</kbd>.
+   - **Pause & Command Bar**: Instantly pauses active gameplay and displays a command bar.
+   - **Loading Spinner Animation**: Displays an animated braille spinner (`⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏`) with real-time feedback while dynamic LLM logic generates.
+   - **Real-Time Guardrail Feedback**: Live status updates (e.g., *"Generated Shockwave Roll logic active — Sandbox Mode flagged"* or *"Default Rules active — Fair Play (Ranked Mode)"*).
+   - **Quick-Prompt Presets**: One-click quick-action buttons for `[Floor is Lava]`, `[Jetpack Skyway]`, `[Coin Magnet]`, and `[Default Rules]`.
+   - **Seamless Resumption**: Press <kbd>Enter</kbd> to apply and resume running, or <kbd>Esc</kbd> to cancel without altering rules.
+
+2. **Mobile-Style Power-Up Countdown HUD Badges (`PowerUpHudBadges`)**:
+   - Mobile-style pills anchored along the upper-left display for all active power-ups.
+   - Dynamic time format: `M:SS` countdown (e.g. `🧲 0:08`, `🚀 0:11`) or persistent active badge (e.g. `🛹 Active`).
+   - Integrated horizontal progress bars: colored fill drains proportionally to remaining duration against max duration.
+
+3. **Student Name Submission on Game Over (`ArcadeEntryModal`)**:
+   - Arcade entry dialog pops up upon crashing to record student details before displaying leaderboard rankings.
+   - Input fields for **Student Name** and **Roll / Student ID Number** with keyboard <kbd>Tab</kbd> focus toggling.
+   - Displays run summary (Score, Coins, Distance, Active Rule Summary).
+   - Instant anti-tamper signing and verification on submission before presenting ranking status.
+
+4. **Interactive Leaderboard Screen Modal (`LeaderboardModal`)**:
+   - Accessible anytime via keyboard shortcut <kbd>L</kbd> or the HUD button <kbd>🏆 [L]</kbd>.
+   - **Dual Board Tabs**: One-click toggling between **🏆 Ranked Board (Fair Play)** and **🧪 Sandbox / Creative Board (Custom AI Rules)**.
+   - Displays rank, student name, roll number, score, and active prompt summary.
+   - **Teacher Export Button**: In-modal <kbd>📥 EXPORT CSV FOR TEACHERS (E)</kbd> button generates verified CSV exports on the fly.
+
+---
+
 ## 🧪 Automated Unit Test Suite
 
-The project features **114 passing unit tests** across 12 specialized test modules:
+The project features **124 passing unit tests** across 13 specialized test modules:
 
 To execute tests:
 ```bash
@@ -195,6 +226,7 @@ python -m pytest tests/
 - **`P`**: Pause / Resume
 - **`C`**: Calibrate Posture
 - **`R`**: Quick Restart after Crash
-- **`Tab`**: Reopen AI Prompt Modifier Dialog
-- **`L`**: In-Game Leaderboard Preview (Ranked & Sandbox)
-- **`E`**: One-Click Export Leaderboard to CSV
+- **`Tab`**: Reopen AI Prompt Modifier Dialog (from Menu or Game Over)
+- **`/` or `T`**: Open In-Game AI Prompt Console (during gameplay)
+- **`L`**: Open Interactive Leaderboard Screen Modal (Ranked vs Sandbox)
+- **`E`**: One-Click Export Leaderboard to CSV (Teacher Tool)
