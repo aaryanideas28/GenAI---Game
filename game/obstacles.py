@@ -168,12 +168,47 @@ POWERUP_SHIELD = "shield"   # Headstart / Shield: smashes through obstacles safe
 POWERUPS = (POWERUP_JETPACK, POWERUP_MAGNET, POWERUP_SNEAKERS, POWERUP_MULTIPLIER, POWERUP_HOVERBOARD, POWERUP_SHIELD)
 
 
+_PICKUP_SOUND = None
+_PICKUP_SOUND_RESOLVED = False
+
+
+def _get_pickup_sound():
+    """Resolve the pickup sound once and cache it.
+
+    ``Audio("powerup")`` recursively globs the whole asset folder (project root,
+    incl. ``.venv``) on every call, which caused a stall on each pickup. Here we
+    check a few known locations directly, load once, and reuse the Audio entity.
+    """
+    global _PICKUP_SOUND, _PICKUP_SOUND_RESOLVED
+    if _PICKUP_SOUND_RESOLVED:
+        return _PICKUP_SOUND
+    _PICKUP_SOUND_RESOLVED = True
+    try:
+        from pathlib import Path
+        from panda3d.core import Filename
+        from ursina import Audio
+        import builtins
+
+        assets_dir = Path(__file__).resolve().parent / "assets"
+        for folder in (assets_dir / "audio", assets_dir, assets_dir / "custom"):
+            for ext in (".ogg", ".wav"):
+                p = folder / f"powerup{ext}"
+                if p.is_file():
+                    clip = builtins.loader.loadSfx(Filename.fromOsSpecific(str(p)))
+                    _PICKUP_SOUND = Audio(clip, autoplay=False, loop=False)
+                    return _PICKUP_SOUND
+    except Exception:
+        _PICKUP_SOUND = None
+    return _PICKUP_SOUND
+
+
 def play_pickup_sound(kind: str) -> None:
     """Plays an authentic audio chime / cue for power-up collection if audio device is available."""
     try:
-        from ursina import Audio
         # Audio cue trigger (safe fallback if asset file absent)
-        Audio("powerup", autoplay=True, loop=False)
+        snd = _get_pickup_sound()
+        if snd is not None:
+            snd.play()
     except Exception:
         pass
 
@@ -245,70 +280,100 @@ class PowerUpToken(Entity):
         tex = tx.get_custom_texture(tex_filename)
 
         if kind == POWERUP_MAGNET:
-            # 1. Magnet Horseshoe: 3D U-shaped magnet with silver pole tips
-            red_col = color.hex("#e61919")
-            silver_col = color.hex("#e0e0e0")
-            # Left & right vertical arms
-            Entity(parent=self, model="cube", color=red_col, scale=(0.14, 0.65, 0.14), x=-0.28, y=0.0)
-            Entity(parent=self, model="cube", color=red_col, scale=(0.14, 0.65, 0.14), x=0.28, y=0.0)
-            # Top curved bridge arch
-            Entity(parent=self, model="cube", color=red_col, scale=(0.70, 0.16, 0.14), y=0.32)
-            # Silver pole caps (North and South poles)
-            Entity(parent=self, model="cube", color=silver_col, scale=(0.16, 0.22, 0.16), x=-0.28, y=-0.36)
-            Entity(parent=self, model="cube", color=silver_col, scale=(0.16, 0.22, 0.16), x=0.28, y=-0.36)
+            from pathlib import Path
+            assets_dir = Path(__file__).resolve().parent / "assets"
+            mag_obj = assets_dir / "models" / "magnet.obj"
+            mag_tex = tx.get_custom_texture("magnet.png") or tex
+            if mag_obj.is_file():
+                # Authentic 3D Subway Surfers Horseshoe Magnet with silver magnetic tips
+                Entity(parent=self, model="magnet.obj", texture=mag_tex, scale=0.85, rotation_y=30, rotation_x=-10, unlit=True, double_sided=True)
+            else:
+                # 1. Magnet Horseshoe fallback: 3D U-shaped magnet with silver pole tips
+                red_col = color.hex("#e61919")
+                silver_col = color.hex("#e0e0e0")
+                # Left & right vertical arms
+                Entity(parent=self, model="cube", color=red_col, scale=(0.14, 0.65, 0.14), x=-0.28, y=0.0)
+                Entity(parent=self, model="cube", color=red_col, scale=(0.14, 0.65, 0.14), x=0.28, y=0.0)
+                # Top curved bridge arch
+                Entity(parent=self, model="cube", color=red_col, scale=(0.70, 0.16, 0.14), y=0.32)
+                # Silver pole caps (North and South poles)
+                Entity(parent=self, model="cube", color=silver_col, scale=(0.16, 0.22, 0.16), x=-0.28, y=-0.36)
+                Entity(parent=self, model="cube", color=silver_col, scale=(0.16, 0.22, 0.16), x=0.28, y=-0.36)
 
         elif kind == POWERUP_JETPACK:
-            # 2. Jetpack Rocket Cylinder: twin booster cylinders with thruster nozzles
-            can_col = color.hex("#2ecc71")
-            metal_col = color.hex("#4a5568")
-            flame_col = color.hex("#f39c12")
-            # Dual cylinders
-            Entity(parent=self, model="cylinder", color=can_col, scale=(0.20, 0.70, 0.20), x=-0.22)
-            Entity(parent=self, model="cylinder", color=can_col, scale=(0.20, 0.70, 0.20), x=0.22)
-            # Top caps / nose domes
-            Entity(parent=self, model="sphere", color=metal_col, scale=(0.22, 0.25, 0.22), x=-0.22, y=0.45)
-            Entity(parent=self, model="sphere", color=metal_col, scale=(0.22, 0.25, 0.22), x=0.22, y=0.45)
-            # Bottom exhaust thrusters
-            Entity(parent=self, model="cylinder", color=flame_col, scale=(0.18, 0.20, 0.18), x=-0.22, y=-0.44)
-            Entity(parent=self, model="cylinder", color=flame_col, scale=(0.18, 0.20, 0.18), x=0.22, y=-0.44)
-            # Center mounting frame
-            Entity(parent=self, model="cube", color=metal_col, scale=(0.30, 0.35, 0.08), y=0.0)
+            from pathlib import Path
+            assets_dir = Path(__file__).resolve().parent / "assets"
+            jp_obj = assets_dir / "models" / "jetpack.obj"
+            jp_tex = tx.get_custom_texture("jetpack.png") or tx.get_custom_texture("props.png") or tex
+            if jp_obj.is_file():
+                Entity(parent=self, model="jetpack.obj", texture=jp_tex, scale=7.5, rotation_y=180, unlit=True, double_sided=True)
+            else:
+                # 2. Jetpack Rocket Cylinder fallback: twin booster cylinders with thruster nozzles
+                can_col = color.hex("#2ecc71")
+                metal_col = color.hex("#4a5568")
+                flame_col = color.hex("#f39c12")
+                Entity(parent=self, model="cylinder", color=can_col, scale=(0.20, 0.70, 0.20), x=-0.22)
+                Entity(parent=self, model="cylinder", color=can_col, scale=(0.20, 0.70, 0.20), x=0.22)
+                Entity(parent=self, model="sphere", color=metal_col, scale=(0.22, 0.25, 0.22), x=-0.22, y=0.45)
+                Entity(parent=self, model="sphere", color=metal_col, scale=(0.22, 0.25, 0.22), x=0.22, y=0.45)
+                Entity(parent=self, model="cylinder", color=flame_col, scale=(0.18, 0.20, 0.18), x=-0.22, y=-0.44)
+                Entity(parent=self, model="cylinder", color=flame_col, scale=(0.18, 0.20, 0.18), x=0.22, y=-0.44)
+                Entity(parent=self, model="cube", color=metal_col, scale=(0.30, 0.35, 0.08), y=0.0)
 
         elif kind == POWERUP_SNEAKERS:
-            # 3. Super Sneaker Shoe: 3D high-top sneaker with rubber sole and collar
-            sole_col = color.white
-            shoe_col = color.hex("#ff3388")
-            collar_col = color.hex("#ff1493")
-            # White rubber sole platform
-            Entity(parent=self, model="cube", color=sole_col, scale=(0.36, 0.12, 0.82), y=-0.38)
-            # Shoe main body
-            Entity(parent=self, model="cube", color=shoe_col, scale=(0.34, 0.32, 0.76), y=-0.18, z=-0.02)
-            # High-top ankle collar
-            Entity(parent=self, model="cube", color=collar_col, scale=(0.34, 0.44, 0.38), y=0.16, z=-0.16)
-            # Front white toe bumper
-            Entity(parent=self, model="cube", color=sole_col, scale=(0.34, 0.16, 0.20), y=-0.24, z=0.30)
+            from pathlib import Path
+            assets_dir = Path(__file__).resolve().parent / "assets"
+            snk_obj = assets_dir / "models" / "sneakers.obj"
+            snk_tex = tx.get_custom_texture("sneakers.png") or tx.get_custom_texture("main.png") or tex
+            if snk_obj.is_file():
+                # Authentic 3D Subway Surfers Super Sneakers pair with green bounce arrows
+                Entity(parent=self, model="sneakers.obj", texture=snk_tex, scale=0.28, y=-0.25, rotation_y=35, unlit=True, double_sided=True)
+            else:
+                # 3. Super Sneaker Shoe fallback: 3D high-top sneaker with rubber sole and collar
+                sole_col = color.white
+                shoe_col = color.hex("#ff3388")
+                collar_col = color.hex("#ff1493")
+                # White rubber sole platform
+                Entity(parent=self, model="cube", color=sole_col, scale=(0.36, 0.12, 0.82), y=-0.38)
+                # Shoe main body
+                Entity(parent=self, model="cube", color=shoe_col, scale=(0.34, 0.32, 0.76), y=-0.18, z=-0.02)
+                # High-top ankle collar
+                Entity(parent=self, model="cube", color=collar_col, scale=(0.34, 0.44, 0.38), y=0.16, z=-0.16)
+                # Front white toe bumper
+                Entity(parent=self, model="cube", color=sole_col, scale=(0.34, 0.16, 0.20), y=-0.24, z=0.30)
 
         elif kind == POWERUP_MULTIPLIER:
-            # 4. 2X Star: 3D 5-point star token with golden halo
-            star_mesh = m3d.make_star_2x_mesh(radius=0.48, thickness=0.16)
-            Entity(parent=self, model=star_mesh, color=color.hex("#ffd700"), scale=1.0)
-            # Central bold red accent disc
-            Entity(parent=self, model="circle", color=color.hex("#ff1744"), scale=(0.42, 0.42), z=0.09)
-            Entity(parent=self, model="circle", color=color.hex("#ff1744"), scale=(0.42, 0.42), z=-0.09)
+            from pathlib import Path
+            assets_dir = Path(__file__).resolve().parent / "assets"
+            mul_obj = assets_dir / "models" / "multiplier.obj"
+            mul_tex = tx.get_custom_texture("common_props_tex.png") or tx.get_custom_texture("multiplier.png") or tex
+            if mul_obj.is_file():
+                # Authentic 3D Subway Surfers 2X Multiplier Star token
+                Entity(parent=self, model="multiplier.obj", texture=mul_tex, scale=0.14, unlit=True, double_sided=True)
+            else:
+                # 4. 2X Star fallback: 3D 5-point star token with golden halo
+                star_mesh = m3d.make_star_2x_mesh(radius=0.48, thickness=0.16)
+                Entity(parent=self, model=star_mesh, color=color.hex("#ffd700"), scale=1.0)
+                # Central bold red accent disc
+                Entity(parent=self, model="circle", color=color.hex("#ff1744"), scale=(0.42, 0.42), z=0.09)
+                Entity(parent=self, model="circle", color=color.hex("#ff1744"), scale=(0.42, 0.42), z=-0.09)
 
         elif kind == POWERUP_HOVERBOARD:
-            # 5. Hoverboard Box / Deck: futuristic tech deck with neon repulsor glow
-            deck_col = color.hex("#00c3ff")
-            neon_col = color.hex("#18ffff")
-            # Aerodynamic hover deck
-            Entity(parent=self, model="cube", color=deck_col, scale=(0.42, 0.10, 0.95), y=-0.10)
-            # Top grip tape strip
-            Entity(parent=self, model="cube", color=color.hex("#111827"), scale=(0.36, 0.04, 0.85), y=-0.04)
-            # Neon side edge light rails
-            Entity(parent=self, model="cube", color=neon_col, scale=(0.44, 0.08, 0.96), y=-0.10)
-            # Under-deck repulsor discs
-            Entity(parent=self, model="cylinder", color=neon_col, scale=(0.28, 0.08, 0.28), y=-0.24, z=-0.25)
-            Entity(parent=self, model="cylinder", color=neon_col, scale=(0.28, 0.08, 0.28), y=-0.24, z=0.25)
+            from pathlib import Path
+            assets_dir = Path(__file__).resolve().parent / "assets"
+            hb_obj = assets_dir / "models" / "hoverboard.obj"
+            hb_tex = tx.get_custom_texture("hoverboard.png") or tx.get_custom_texture("main.png") or tex
+            if hb_obj.is_file():
+                Entity(parent=self, model="hoverboard.obj", texture=hb_tex, scale=0.18, rotation_x=22, rotation_y=45, unlit=True, double_sided=True)
+            else:
+                # 5. Hoverboard Box / Deck fallback: futuristic tech deck with neon repulsor glow
+                deck_col = color.hex("#00c3ff")
+                neon_col = color.hex("#18ffff")
+                Entity(parent=self, model="cube", color=deck_col, scale=(0.42, 0.10, 0.95), y=-0.10)
+                Entity(parent=self, model="cube", color=color.hex("#111827"), scale=(0.36, 0.04, 0.85), y=-0.04)
+                Entity(parent=self, model="cube", color=neon_col, scale=(0.44, 0.08, 0.96), y=-0.10)
+                Entity(parent=self, model="cylinder", color=neon_col, scale=(0.28, 0.08, 0.28), y=-0.24, z=-0.25)
+                Entity(parent=self, model="cylinder", color=neon_col, scale=(0.28, 0.08, 0.28), y=-0.24, z=0.25)
 
         else:  # POWERUP_SHIELD
             # 6. Shield: translucent cyan buckler aegis with protective boss
@@ -318,8 +383,8 @@ class PowerUpToken(Entity):
             Entity(parent=self, model="cube", color=color.hex("#ffffff"), scale=(0.58, 0.12, 0.08))
             Entity(parent=self, model="cube", color=color.hex("#ffffff"), scale=(0.12, 0.58, 0.08))
 
-        # Overlay authentic logo texture disc if available for high-fidelity presentation
-        if tex:
+        # Overlay authentic logo texture disc if available (skip for 3D models to prevent image clipping)
+        if tex and kind not in (POWERUP_JETPACK, POWERUP_HOVERBOARD, POWERUP_SNEAKERS, POWERUP_MAGNET, POWERUP_MULTIPLIER):
             badge = Entity(parent=self, model="quad", texture=tex, scale=(1.25, 1.25),
                            double_sided=True, unlit=True)
             Entity(parent=badge, model="circle", color=color.hex("#ffffff88"), scale=(1.15, 1.15), z=0.01)
@@ -453,10 +518,10 @@ class ObstacleManager:
                 self.until_next = logic.next_gap(self.rng, speed, self.cfg)
 
     def spawn_sky_coins(self, start_z: float = 20.0, count: int = 16) -> None:
-        """Spawns a streak of sky coins for Jetpack mode."""
+        """Spawns a streak of sky coins for Jetpack mode high above trains and tunnels."""
         for i in range(count):
             lane = (-1, 0, 1)[(i // 4) % 3]
-            cs = logic.CoinSpec(lane, start_z + i * 3.5, 5.8)
+            cs = logic.CoinSpec(lane, start_z + i * 3.5, 11.0)
             self.coins.append(Coin(cs, self.cfg))
 
 

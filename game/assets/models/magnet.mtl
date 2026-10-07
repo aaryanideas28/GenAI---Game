@@ -1,0 +1,8 @@
+# Magnet Material with map_Kd
+newmtl Magnet_Red
+Kd 0.95 0.12 0.12
+map_Kd magnet.png
+
+newmtl Magnet_Silver
+Kd 0.90 0.90 0.93
+map_Kd magnet.png

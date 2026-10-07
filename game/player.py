@@ -18,7 +18,9 @@ class Player(Entity):
 
     def __init__(self, cfg: dict) -> None:
         super().__init__(position=(0, 0, 0))
-        self.cfg = cfg
+        self.cfg = dict(cfg)
+        self.base_jump_velocity = float(self.cfg.get("jump_velocity", 15.0))
+        self.base_gravity = float(self.cfg.get("gravity", 55.0))
         self.lane = 0
         self.vy = 0.0
         self.grounded = True
@@ -127,12 +129,30 @@ class Player(Entity):
         return self.y + (logic.PLAYER_ROLL_HEIGHT if self.rolling else logic.PLAYER_STAND_HEIGHT)
 
     def set_hoverboard_active(self, active: bool) -> None:
-        """Toggles 3D Hoverboard visual surfboard entity under player's feet."""
+        """Toggles authentic 3D Subway Surfers Hoverboard surfboard under player's feet."""
         if active:
             if getattr(self, "hoverboard_mesh", None) is None:
+                from pathlib import Path
                 from game import textures as tx
-                hb_tex = tx.get_custom_texture("powerup_hoverboard.png")
-                if hb_tex:
+                assets_dir = Path(__file__).resolve().parent / "assets"
+                hb_obj = assets_dir / "models" / "hoverboard.obj"
+                hb_tex = (
+                    tx.get_custom_texture("hoverboard.png")
+                    or tx.get_custom_texture("main.png")
+                    or tx.get_custom_texture("powerup_hoverboard.png")
+                )
+                if hb_obj.is_file():
+                    self.hoverboard_mesh = Entity(
+                        parent=self.model_root,
+                        model="hoverboard.obj",
+                        texture=hb_tex,
+                        scale=0.27,
+                        rotation_y=90,
+                        position=(0, 0.05, 0),
+                        unlit=True,
+                        double_sided=True,
+                    )
+                elif hb_tex:
                     self.hoverboard_mesh = Entity(
                         parent=self.model_root, model="quad", texture=hb_tex,
                         scale=(1.1, 2.4), rotation_x=90, position=(0, 0.05, 0), unlit=True
@@ -150,41 +170,176 @@ class Player(Entity):
 
 
     def set_jetpack_active(self, active: bool) -> None:
-        """Attaches/removes twin spray-can Jetpack on Jake's back with thruster effects."""
+        """Attaches/removes authentic 3D Subway Surfers twin spray-can Jetpack on Jake's back."""
         if active:
             if getattr(self, "jetpack_mesh", None) is None:
+                from pathlib import Path
                 from game import textures as tx
-                jp_tex = tx.get_custom_texture("powerup_jetpack.png")
-                self.jetpack_mesh = Entity(
-                    parent=self.torso if hasattr(self, "torso") else self.model_root,
-                    model="quad" if jp_tex else "cube",
-                    texture=jp_tex,
-                    color=color.white if jp_tex else color.hex("#44cc22"),
-                    scale=(0.85, 0.95) if jp_tex else (0.5, 0.7, 0.3),
-                    position=(0, 0, -0.26) if hasattr(self, "torso") else (0, 1.2, -0.26),
-                    rotation_y=180 if jp_tex else 0,
-                    unlit=True
+                assets_dir = Path(__file__).resolve().parent / "assets"
+                jp_obj = assets_dir / "models" / "jetpack.obj"
+                jp_tex = (
+                    tx.get_custom_texture("jetpack.png")
+                    or tx.get_custom_texture("props.png")
+                    or tx.get_custom_texture("powerup_jetpack.png")
                 )
-                self.jetpack_flames = []
-                for x_off in (-0.18, 0.18):
-                    flame = Entity(
-                        parent=self.jetpack_mesh, model="quad",
-                        color=color.hex("#ffaa00"), scale=(0.22, 0.8),
-                        position=(x_off, -0.55, 0.01), unlit=True
+                if jp_obj.is_file():
+                    # Authentic 3D Jetpack spray can model mounted on Jake's upper back
+                    target_parent = (
+                        self.torso if hasattr(self, "torso")
+                        else (self.jake_mesh if hasattr(self, "jake_mesh") and self.jake_mesh else self.model_root)
                     )
-                    self.jetpack_flames.append(flame)
+                    is_in_jake_mesh = hasattr(self, "torso") or (hasattr(self, "jake_mesh") and self.jake_mesh)
+                    self.jetpack_mesh = Entity(
+                        parent=target_parent,
+                        model="jetpack.obj",
+                        texture=jp_tex,
+                        scale=7.2,
+                        position=(0, 0.85, 0.22) if is_in_jake_mesh else (0, 1.10, -0.22),
+                        rotation_y=0 if is_in_jake_mesh else 180,
+                        unlit=True,
+                        double_sided=True,
+                    )
+                    self.jetpack_flames = []
+                    # Dynamic rocket thruster exhaust flames underneath spray cans (parented to jetpack)
+                    for x_off in (-0.021, 0.021):
+                        flame = Entity(
+                            parent=self.jetpack_mesh,
+                            model="quad",
+                            color=color.hex("#ffaa00"),
+                            scale=(0.018, 0.04),
+                            position=(x_off, -0.005, 0.0),
+                            origin_y=0.5,
+                            unlit=True,
+                            double_sided=True,
+                        )
+                        self.jetpack_flames.append(flame)
+                else:
+                    self.jetpack_mesh = Entity(
+                        parent=self.torso if hasattr(self, "torso") else self.model_root,
+                        model="quad" if jp_tex else "cube",
+                        texture=jp_tex,
+                        color=color.white if jp_tex else color.hex("#44cc22"),
+                        scale=(0.85, 0.95) if jp_tex else (0.5, 0.7, 0.3),
+                        position=(0, 0, -0.26) if hasattr(self, "torso") else (0, 1.2, -0.26),
+                        rotation_y=180 if jp_tex else 0,
+                        unlit=True,
+                    )
+                    self.jetpack_flames = []
+                    for x_off in (-0.18, 0.18):
+                        flame = Entity(
+                            parent=self.jetpack_mesh, model="quad",
+                            color=color.hex("#ffaa00"), scale=(0.22, 0.8),
+                            position=(x_off, -0.55, 0.01), unlit=True
+                        )
+                        self.jetpack_flames.append(flame)
         else:
             if getattr(self, "jetpack_mesh", None) is not None:
                 from ursina import destroy
                 destroy(self.jetpack_mesh)
                 self.jetpack_mesh = None
+            if getattr(self, "jetpack_flames", None):
+                from ursina import destroy
+                for f in self.jetpack_flames:
+                    destroy(f)
                 self.jetpack_flames = []
+
+    def set_sneakers_active(self, active: bool) -> None:
+        """Toggles authentic 3D Subway Surfers Super Sneakers on Jake's feet."""
+        if active:
+            if getattr(self, "sneakers_mesh", None) is None:
+                from pathlib import Path
+                from game import textures as tx
+                assets_dir = Path(__file__).resolve().parent / "assets"
+                snk_l_obj = assets_dir / "models" / "sneaker_l.obj"
+                snk_r_obj = assets_dir / "models" / "sneaker_r.obj"
+                snk_pair_obj = assets_dir / "models" / "sneakers.obj"
+                snk_tex = (
+                    tx.get_custom_texture("sneakers.png")
+                    or tx.get_custom_texture("main.png")
+                    or tx.get_custom_texture("powerup_sneakers.png")
+                )
+                self.sneakers_mesh = []
+                if hasattr(self, "leg_l") and hasattr(self, "leg_r") and snk_l_obj.is_file() and snk_r_obj.is_file():
+                    # Articulated animated Super Sneakers attached to Jake's running/jumping legs
+                    s_l = Entity(
+                        parent=self.leg_l,
+                        model="sneaker_l.obj",
+                        texture=snk_tex,
+                        scale=0.25,
+                        position=(-0.02, -0.82, 0.04),
+                        unlit=True,
+                        double_sided=True,
+                    )
+                    s_r = Entity(
+                        parent=self.leg_r,
+                        model="sneaker_r.obj",
+                        texture=snk_tex,
+                        scale=0.25,
+                        position=(0.02, -0.82, 0.04),
+                        unlit=True,
+                        double_sided=True,
+                    )
+                    self.sneakers_mesh.extend([s_l, s_r])
+                elif snk_pair_obj.is_file():
+                    s_pair = Entity(
+                        parent=self.model_root,
+                        model="sneakers.obj",
+                        texture=snk_tex,
+                        scale=0.25,
+                        position=(0, 0.0, 0.04),
+                        unlit=True,
+                        double_sided=True,
+                    )
+                    self.sneakers_mesh.append(s_pair)
+        else:
+            if getattr(self, "sneakers_mesh", None):
+                from ursina import destroy
+                for m in self.sneakers_mesh:
+                    destroy(m)
+                self.sneakers_mesh = None
+
+    def set_magnet_active(self, active: bool) -> None:
+        """Toggles authentic 3D Subway Surfers Coin Magnet floating beside Jake."""
+        if active:
+            if getattr(self, "magnet_mesh", None) is None:
+                from pathlib import Path
+                from game import textures as tx
+                assets_dir = Path(__file__).resolve().parent / "assets"
+                mag_obj = assets_dir / "models" / "magnet.obj"
+                mag_tex = tx.get_custom_texture("magnet.png") or tx.get_custom_texture("powerup_magnet.png")
+                if mag_obj.is_file():
+                    target_parent = (
+                        self.torso if hasattr(self, "torso")
+                        else (self.jake_mesh if hasattr(self, "jake_mesh") and self.jake_mesh else self.model_root)
+                    )
+                    is_in_jake_mesh = hasattr(self, "torso") or (hasattr(self, "jake_mesh") and self.jake_mesh)
+                    self._magnet_base_y = 1.40 if is_in_jake_mesh else 1.40
+                    self._magnet_base_rz = -15 if is_in_jake_mesh else 15
+                    self.magnet_mesh = Entity(
+                        parent=target_parent,
+                        model="magnet.obj",
+                        texture=mag_tex,
+                        scale=0.32,
+                        position=(-0.45, self._magnet_base_y, -0.10) if is_in_jake_mesh else (0.45, self._magnet_base_y, 0.10),
+                        rotation_z=self._magnet_base_rz,
+                        rotation_y=-20 if is_in_jake_mesh else 20,
+                        rotation_x=10,
+                        unlit=True,
+                        double_sided=True,
+                    )
+        else:
+            if getattr(self, "magnet_mesh", None) is not None:
+                from ursina import destroy
+                destroy(self.magnet_mesh)
+                self.magnet_mesh = None
 
     def reset(self) -> None:
         self.set_hoverboard_active(False)
         self.set_jetpack_active(False)
-        self.cfg["jump_velocity"] = 17.0
-        self.cfg["gravity"] = 55.0
+        self.set_sneakers_active(False)
+        self.set_magnet_active(False)
+        self.cfg["jump_velocity"] = getattr(self, "base_jump_velocity", 15.0)
+        self.cfg["gravity"] = getattr(self, "base_gravity", 55.0)
         self.lane = 0
         self.position = (0, 0, 0)
         self.vy = 0.0
@@ -257,8 +412,16 @@ class Player(Entity):
         if getattr(self, "jetpack_flames", None):
             import random
             for flame in self.jetpack_flames:
-                flame.scale_y = 0.7 + random.uniform(-0.15, 0.25)
+                # 3D jetpack mesh has parent scale ~7.2, so local flame scale is ~0.04
+                if getattr(self, "jetpack_mesh", None) and hasattr(self.jetpack_mesh, "scale_x") and self.jetpack_mesh.scale_x > 2.0:
+                    flame.scale_y = 0.04 + random.uniform(-0.006, 0.010)
+                else:
+                    flame.scale_y = 0.7 + random.uniform(-0.15, 0.25)
                 flame.color = color.hex(random.choice(["#ffaa00", "#ff4400", "#ffea00", "#00e5ff"]))
+
+        if getattr(self, "magnet_mesh", None) is not None and hasattr(self, "_magnet_base_y"):
+            self.magnet_mesh.y = self._magnet_base_y + math.sin(self.anim_t * 3.0) * 0.04
+            self.magnet_mesh.rotation_z = self._magnet_base_rz + math.sin(self.anim_t * 2.5) * 4.0
 
         self._animate(dt, speed, dx)
 

@@ -211,6 +211,9 @@ class BehavioralLogicPackage:
     state: Dict[str, Any] = field(default_factory=dict)
     raw_prompt: str = ""
     json_response: str = ""
+    # Set when the live LLM call was skipped/failed and keyword-based offline rules were used.
+    used_fallback: bool = False
+    fallback_reason: str = ""
 
     def compile_all(self) -> None:
         """Compiles all hooks inside the package."""
@@ -254,6 +257,23 @@ def _safe_compile_lambda(expr_str: str, is_condition: bool = True) -> Callable[[
 
 
 # --- LLM Synthesizer Engine --------------------------------------------------
+
+def describe_llm_error(exc: BaseException) -> str:
+    """Maps an LLM API exception to a short human-readable reason for the HUD."""
+    msg = str(exc).lower()
+    if "503" in msg or "unavailable" in msg or "overloaded" in msg or "high demand" in msg:
+        return "AI busy (model in high demand)"
+    if "429" in msg or "resource_exhausted" in msg or "quota" in msg or "rate limit" in msg:
+        return "AI quota / rate limit reached"
+    if "timeout" in msg or "timed out" in msg or "deadline" in msg:
+        return "AI request timed out"
+    if "404" in msg or "not found" in msg:
+        return "AI model not found"
+    if "401" in msg or "403" in msg or "api key" in msg or "permission" in msg:
+        return "AI key rejected"
+    if "connect" in msg or "network" in msg or "getaddrinfo" in msg:
+        return "no internet connection"
+    return "AI request failed"
 
 class LLMGameLogicSynthesizer:
     """Direct LLM Integration engine to synthesize game rules from prompts."""
@@ -299,18 +319,35 @@ class LLMGameLogicSynthesizer:
 
         prompt = sanitized_or_err
         json_str = ""
+        fallback_reason = ""
 
         # Direct API call if API key is provided/available in env
         if self.api_key:
             try:
                 json_str = self._call_llm_api(prompt, streaming_callback=streaming_callback)
+                if not json_str:
+                    fallback_reason = "AI returned an empty response"
             except Exception as exc:
                 logger.error("API call to LLM provider %s failed: %s. Using dynamic prompt synthesis fallback.", self.provider, exc)
+                fallback_reason = describe_llm_error(exc)
+        else:
+            fallback_reason = "no API key"
 
         if not json_str:
             json_str = self._synthesize_fallback_json(prompt)
 
         package = self._parse_json_to_package(json_str, prompt)
+        if fallback_reason:
+            package.used_fallback = True
+            package.fallback_reason = fallback_reason
+        package.compile_all()
+        return package
+
+    def synthesize_offline(self, prompt: str, reason: str) -> BehavioralLogicPackage:
+        """Builds a package from local keyword rules only (no network)."""
+        package = self._parse_json_to_package(self._synthesize_fallback_json(prompt), prompt)
+        package.used_fallback = True
+        package.fallback_reason = reason
         package.compile_all()
         return package
 

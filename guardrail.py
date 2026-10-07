@@ -258,7 +258,7 @@ class GuardrailEngine:
 
     def __init__(
         self,
-        model_name: str = "gemini-3.8-flash",
+        model_name: str = "gemini-2.5-flash",
         timeout_s: float = 8.0,
     ) -> None:
         self._model_name = model_name
@@ -365,15 +365,8 @@ class GuardrailEngine:
             data = json.loads(raw_text)
             llm_resp = LLMResponse(**data)
         except Exception as exc:
-            logger.warning("[Guardrail] Could not parse LLM response: %s | raw=%r", exc, raw_text)
-            return GuardrailResult(
-                allowed=False,
-                reason="Could not parse AI response – request blocked as precaution.",
-                params=GameParams(),
-                raw_prompt=prompt,
-                latency_ms=latency_ms,
-                threat_level="LOW",
-            )
+            logger.warning("[Guardrail] Could not parse LLM response: %s | raw=%r, falling back to local evaluation", exc, raw_text)
+            return self._local_evaluate(prompt, t0)
 
         logger.info("[Guardrail] LLM: allowed=%s reason=%r latency=%.0fms",
                     llm_resp.allowed, llm_resp.reason, latency_ms)

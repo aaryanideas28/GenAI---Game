@@ -1,0 +1,3 @@
+newmtl common_props_tex
+Kd 1 1 1
+map_Kd common_props_tex.png

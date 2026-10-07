@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import random
 from pathlib import Path
 
@@ -184,6 +185,8 @@ class Game(Entity):
                  student_name: str = "Jake", roll_number: str = "SUB-001") -> None:
         super().__init__()
         self.cfg = load_config()
+        self.base_jump_velocity = float(self.cfg.get("jump_velocity", 15.0))
+        self.base_gravity = float(self.cfg.get("gravity", 55.0))
         self.watcher = ConfigWatcher()
         self.watch_timer = 0.0
 
@@ -196,6 +199,9 @@ class Game(Entity):
             "multiplier": 0, "hoverboard": 0, "shield": 0,
         }
         self.active_prompt_summary = "Vanilla / Default Rules"
+
+        from game.preload import preload_assets
+        preload_assets()
 
         self.world = World(self.cfg)
         self.player = Player(self.cfg)
@@ -235,6 +241,11 @@ class Game(Entity):
         self.prev_lane = 0
         self.state_time = 0.0
         self.has_calibrated = False
+
+        # Asynchronous background prompt synthesis worker
+        import queue
+        self._prompt_result_queue: queue.Queue = queue.Queue()
+        self._prompt_worker_active: bool = False
 
         camera.position = CAMERA_OFFSET
         camera.rotation_x = CAMERA_PITCH
@@ -281,12 +292,16 @@ class Game(Entity):
             self.obstacles.spawn_sky_coins(self.distance + 15.0)
         elif kind == POWERUP_MAGNET:
             self.powerup_timers[POWERUP_MAGNET] = self.powerup_timers.get(POWERUP_MAGNET, 0.0) + 10.0 if is_stacked else 10.0
+            if hasattr(self.player, "set_magnet_active"):
+                self.player.set_magnet_active(True)
             self.hud.show_toast("🧲 COIN MAGNET!" if not is_stacked else "🧲 MAGNET EXTENDED!", 2.5)
         elif kind == POWERUP_SNEAKERS:
             self.powerup_timers[POWERUP_SNEAKERS] = self.powerup_timers.get(POWERUP_SNEAKERS, 0.0) + 10.0 if is_stacked else 10.0
+            if hasattr(self.player, "set_sneakers_active"):
+                self.player.set_sneakers_active(True)
             if hasattr(self.player, "cfg") and isinstance(self.player.cfg, dict):
                 self.player.cfg["jump_velocity"] = 22.5
-                self.player.cfg["gravity"] = self.cfg.get("gravity", 55.0)
+                self.player.cfg["gravity"] = self.base_gravity
             self.hud.show_toast("[SNEAKERS] SUPER JUMP ACTIVE!" if not is_stacked else "[SNEAKERS] EXTENDED!", 2.5)
         elif kind == POWERUP_MULTIPLIER:
             self.powerup_timers[POWERUP_MULTIPLIER] = self.powerup_timers.get(POWERUP_MULTIPLIER, 0.0) + 12.0 if is_stacked else 12.0
@@ -338,7 +353,8 @@ class Game(Entity):
                 if p.game_speed is not None:
                     self.cfg["start_speed"] = p.game_speed
                 if p.jump_height is not None:
-                    self.player.cfg["jump_velocity"] = p.jump_height * 15.0
+                    self.base_jump_velocity = p.jump_height * 15.0
+                    self.player.cfg["jump_velocity"] = self.base_jump_velocity
                 if p.score_multiplier is not None:
                     self.powerup_timers["multiplier"] = 12.0 if p.score_multiplier >= 2.0 else 0.0
                 if p.powerup:
@@ -352,14 +368,96 @@ class Game(Entity):
 
         # --- Layer 2 + 3: LLM rule synthesis ---------------------------------
         package = self.synthesizer.synthesize(prompt)
+        self.apply_package(package, guardrail_result=guardrail_result if _GUARDRAIL_ENGINE is not None else None)
+        return package
+
+    def apply_package(self, package: BehavioralLogicPackage, guardrail_result: Any = None) -> None:
+        """Applies a synthesized BehavioralLogicPackage and notifies the user via HUD."""
         self.rule_executor.set_package(package)
         if package.title in ("Prompt Blocked", "Prompt Blocked by Guardrail"):
             self.hud.show_toast(f"Guardrail: {package.summary}", 3.5)
             self.active_prompt_summary = "Vanilla / Default Rules"
         else:
-            self.hud.show_toast(f"AI Mode Loaded: {package.title}", 3.0)
+            if getattr(package, "used_fallback", False):
+                reason = getattr(package, "fallback_reason", "AI offline")
+                self.hud.show_toast(f"Offline Mode ({reason}): {package.title}", 3.5)
+            else:
+                self.hud.show_toast(f"AI Mode Loaded: {package.title}", 3.0)
             self.active_prompt_summary = f"{package.title}: {package.summary}" if package.summary else package.title
-        return package
+
+    def apply_llm_prompt_async(self, prompt: str, on_complete: Optional[Callable[[BehavioralLogicPackage], None]] = None) -> None:
+        """Runs guardrails and LLM prompt synthesis on a background worker thread.
+
+        Prevents frame drops and UI freezes while network requests to Gemini are in-flight.
+        """
+        import threading
+
+        self.hud.show_toast("Generating AI gameplay logic...", 2.5)
+
+        def _worker():
+            try:
+                guardrail_res = None
+                if _GUARDRAIL_ENGINE is not None:
+                    guardrail_res = _GUARDRAIL_ENGINE.evaluate(prompt)
+                    if not guardrail_res.allowed:
+                        pkg = BehavioralLogicPackage(
+                            title="Prompt Blocked by Guardrail",
+                            summary=guardrail_res.reason,
+                            mode_type="custom_rules",
+                            hooks=[],
+                            state={},
+                            raw_prompt=prompt,
+                            json_response="",
+                        )
+                        self._prompt_result_queue.put((pkg, guardrail_res, on_complete))
+                        return
+
+                pkg = self.synthesizer.synthesize(prompt)
+                self._prompt_result_queue.put((pkg, guardrail_res, on_complete))
+            except Exception as exc:
+                logger.exception("Async LLM synthesis worker failed: %s", exc)
+                pkg = self.synthesizer.synthesize_offline(prompt, reason="AI error")
+                self._prompt_result_queue.put((pkg, None, on_complete))
+
+        t = threading.Thread(target=_worker, name="LLM-Synthesis-Worker", daemon=True)
+        t.start()
+
+    def _drain_prompt_results(self) -> None:
+        """Drains completed background LLM synthesis jobs on the main Ursina thread."""
+        while not self._prompt_result_queue.empty():
+            try:
+                pkg, guardrail_res, callback = self._prompt_result_queue.get_nowait()
+            except Exception:
+                break
+
+            if guardrail_res and not guardrail_res.allowed:
+                self._show_guardrail_banner(
+                    f"⚠ CAUTION [{guardrail_res.threat_level}]: {guardrail_res.reason}"
+                )
+            elif guardrail_res and guardrail_res.allowed:
+                p = guardrail_res.params
+                if p.game_speed is not None:
+                    self.cfg["start_speed"] = p.game_speed
+                if p.jump_height is not None:
+                    self.base_jump_velocity = p.jump_height * 15.0
+                    self.player.cfg["jump_velocity"] = self.base_jump_velocity
+                if p.score_multiplier is not None:
+                    self.powerup_timers["multiplier"] = 12.0 if p.score_multiplier >= 2.0 else 0.0
+                if p.powerup:
+                    _pu_map = {
+                        "Jetpack": "jetpack", "CoinMagnet": "magnet",
+                        "SuperSneakers": "sneakers", "ScoreMultiplier": "multiplier",
+                        "Hoverboard": "hoverboard", "Shield": "shield",
+                    }
+                    mapped = _pu_map.get(p.powerup, p.powerup.lower())
+                    self.activate_powerup(mapped)
+
+            self.apply_package(pkg, guardrail_result=guardrail_res)
+            if callback:
+                try:
+                    callback(pkg)
+                except Exception as cb_exc:
+                    logger.warning("Prompt completion callback raised: %s", cb_exc)
 
     def _show_guardrail_banner(self, message: str, duration: float = 4.0) -> None:
         """Displays a flashing red CAUTION/WARNING banner on the HUD when a prompt is blocked."""
@@ -406,7 +504,11 @@ class Game(Entity):
     def _on_prompt_start(self, prompt: str) -> None:
         """Called when user submits prompt or clicks start from prompt UI."""
         if prompt:
-            self.apply_llm_prompt(prompt)
+            # Under automated tests (PYTEST_CURRENT_TEST), run synchronously for deterministic assertions
+            if "PYTEST_CURRENT_TEST" in os.environ:
+                self.apply_llm_prompt(prompt)
+            else:
+                self.apply_llm_prompt_async(prompt)
         else:
             self.active_prompt_summary = "Vanilla / Default Rules"
         self.start_from_menu()
@@ -443,10 +545,14 @@ class Game(Entity):
             self.player.set_hoverboard_active(False)
         if hasattr(self.player, "set_jetpack_active"):
             self.player.set_jetpack_active(False)
+        if hasattr(self.player, "set_sneakers_active"):
+            self.player.set_sneakers_active(False)
+        if hasattr(self.player, "set_magnet_active"):
+            self.player.set_magnet_active(False)
         self._jetpack_descending = False
         if hasattr(self.player, "cfg") and isinstance(self.player.cfg, dict):
-            self.player.cfg["jump_velocity"] = self.cfg.get("jump_velocity", 17.0)
-            self.player.cfg["gravity"] = self.cfg.get("gravity", 55.0)
+            self.player.cfg["jump_velocity"] = self.base_jump_velocity
+            self.player.cfg["gravity"] = self.base_gravity
         self.state = STATE_COUNTDOWN
         self.state_time = 0.0
         self.hud.center.text = ""
@@ -495,10 +601,14 @@ class Game(Entity):
             self.player.set_hoverboard_active(False)
         if hasattr(self.player, "set_jetpack_active"):
             self.player.set_jetpack_active(False)
+        if hasattr(self.player, "set_sneakers_active"):
+            self.player.set_sneakers_active(False)
+        if hasattr(self.player, "set_magnet_active"):
+            self.player.set_magnet_active(False)
         self._jetpack_descending = False
         if hasattr(self.player, "cfg") and isinstance(self.player.cfg, dict):
-            self.player.cfg["jump_velocity"] = self.cfg.get("jump_velocity", 17.0)
-            self.player.cfg["gravity"] = self.cfg.get("gravity", 55.0)
+            self.player.cfg["jump_velocity"] = self.base_jump_velocity
+            self.player.cfg["gravity"] = self.base_gravity
         self.state = STATE_PLAYING
         self.state_time = 0.0
         self.hud.center.text = ""
@@ -540,10 +650,14 @@ class Game(Entity):
             self.player.set_hoverboard_active(False)
         if hasattr(self.player, "set_jetpack_active"):
             self.player.set_jetpack_active(False)
+        if hasattr(self.player, "set_sneakers_active"):
+            self.player.set_sneakers_active(False)
+        if hasattr(self.player, "set_magnet_active"):
+            self.player.set_magnet_active(False)
         self._jetpack_descending = False
         if hasattr(self.player, "cfg") and isinstance(self.player.cfg, dict):
-            self.player.cfg["jump_velocity"] = self.cfg.get("jump_velocity", 17.0)
-            self.player.cfg["gravity"] = self.cfg.get("gravity", 55.0)
+            self.player.cfg["jump_velocity"] = self.base_jump_velocity
+            self.player.cfg["gravity"] = self.base_gravity
         if hasattr(self.hud, "powerup_badge"):
             self.hud.powerup_badge.text = ""
         if hasattr(self.hud, "powerup_hud_badges"):
@@ -837,6 +951,14 @@ class Game(Entity):
             self.cmd_jump()
         elif key in ("down arrow", "s"):
             self.cmd_roll()
+        elif key in ("h", "b") and self.state == STATE_PLAYING:
+            self.activate_powerup("hoverboard")
+        elif key == "j" and self.state == STATE_PLAYING:
+            self.activate_powerup("jetpack")
+        elif key == "m" and self.state == STATE_PLAYING:
+            self.activate_powerup("magnet")
+        elif key == "k" and self.state == STATE_PLAYING:
+            self.activate_powerup("sneakers")
         elif key == "p":
             self.toggle_pause()
         elif key == "c":
@@ -896,6 +1018,8 @@ class Game(Entity):
         dt = min(time.dt, 1 / 20)
         self.state_time += dt
         self._drain_commands()
+        if hasattr(self, "_drain_prompt_results"):
+            self._drain_prompt_results()
         self._check_config(dt)
         self.hud.tick(dt)
 
@@ -927,16 +1051,21 @@ class Game(Entity):
                                 self.player.set_jetpack_active(False)
                             self._jetpack_descending = True
                         elif k == "sneakers":
+                            if hasattr(self.player, "set_sneakers_active"):
+                                self.player.set_sneakers_active(False)
                             if hasattr(self.player, "cfg") and isinstance(self.player.cfg, dict):
-                                self.player.cfg["jump_velocity"] = self.cfg.get("jump_velocity", 17.0)
-                                self.player.cfg["gravity"] = self.cfg.get("gravity", 55.0)
+                                self.player.cfg["jump_velocity"] = self.base_jump_velocity
+                                self.player.cfg["gravity"] = self.base_gravity
+                        elif k == "magnet":
+                            if hasattr(self.player, "set_magnet_active"):
+                                self.player.set_magnet_active(False)
                         self.hud.show_toast(f"{k.upper()} EXPIRED", 1.5)
                         if self._game_dispatcher and _GAME_EVENTS_AVAILABLE:
                             self._game_dispatcher.emit_powerup(k, 0.0, started=False)
 
             # Active power-up behaviors
             if self.powerup_timers["jetpack"] > 0:
-                target_sky_y = 6.2
+                target_sky_y = 11.2  # Soar high in open sky above trains and tunnel roofs
                 self.player.y = lerp(self.player.y, target_sky_y, min(1, dt * 5))
                 self.player.grounded = True
                 self.player.vy = 0.0
@@ -954,10 +1083,10 @@ class Game(Entity):
             if hasattr(self.player, "cfg") and isinstance(self.player.cfg, dict):
                 if self.powerup_timers["sneakers"] > 0:
                     self.player.cfg["jump_velocity"] = 22.5
-                    self.player.cfg["gravity"] = self.cfg.get("gravity", 55.0)
+                    self.player.cfg["gravity"] = self.base_gravity
                 else:
-                    self.player.cfg["jump_velocity"] = self.cfg.get("jump_velocity", 17.0)
-                    self.player.cfg["gravity"] = self.cfg.get("gravity", 55.0)
+                    self.player.cfg["jump_velocity"] = self.base_jump_velocity
+                    self.player.cfg["gravity"] = self.base_gravity
 
             mult_val = 2 if self.powerup_timers["multiplier"] > 0 else 1
             if hasattr(self.hud, "multiplier"):
@@ -1090,8 +1219,8 @@ class Game(Entity):
                 return
 
 
-        # Check collision with blocked tunnel facade / sawhorses
-        if self.distance > 2.0 and hasattr(self.world, "tunnels"):
+        # Check collision with blocked tunnel facade / sawhorses (safely fly over when jetpack active)
+        if self.powerup_timers.get("jetpack", 0.0) <= 0 and self.distance > 2.0 and hasattr(self.world, "tunnels"):
             for tun in self.world.tunnels:
                 if -0.8 <= tun.z <= 1.2:
                     if p.lane != getattr(tun, "tunnel_lane", 1):
