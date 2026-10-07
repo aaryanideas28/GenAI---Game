@@ -182,13 +182,17 @@ def generate_row(rng: random.Random, spawn_z: float, live: list[ObstacleSpec],
         blocked = rng.sample(available, n_block)
         free_lanes = [lane for lane in available if lane not in blocked]
 
+        is_lava = bool(cfg.get("floor_is_lava", False) or cfg.get("mode_type") == "floor_is_lava")
+        obstacle_weights = [1.0, 0.0, 0.0] if is_lava else [0.45, 0.3, 0.25]
+        ramp_prob = 1.0 if is_lava else 0.45
+
         for lane in blocked:
-            kind = rng.choices([KIND_TRAIN, KIND_LOW, KIND_HIGH], weights=[0.45, 0.3, 0.25])[0]
+            kind = rng.choices([KIND_TRAIN, KIND_LOW, KIND_HIGH], weights=obstacle_weights)[0]
             if kind == KIND_TRAIN:
-                length = rng.uniform(TRAIN_MIN_LENGTH, TRAIN_MAX_LENGTH)
-                moving = (rng.random() < cfg.get("moving_train_chance", 0.0)
+                length = rng.uniform(26.0, 36.0) if is_lava else rng.uniform(TRAIN_MIN_LENGTH, TRAIN_MAX_LENGTH)
+                moving = False if is_lava else (rng.random() < cfg.get("moving_train_chance", 0.0)
                           and can_add_moving_train(lane, live + result.obstacles, spawn_z))
-                has_ramp = False if moving else (rng.random() < 0.45)
+                has_ramp = False if moving else (rng.random() < ramp_prob)
                 spec = ObstacleSpec(KIND_TRAIN, lane, spawn_z, length, moving, has_ramp)
                 result.obstacles.append(spec)
                 if has_ramp and rng.random() < 0.8:
@@ -217,6 +221,9 @@ def generate_row(rng: random.Random, spawn_z: float, live: list[ObstacleSpec],
 
 def next_gap(rng: random.Random, speed: float, cfg: dict) -> float:
     """Distance until the next row; grows a little with speed so reaction time stays fair."""
-    base = rng.uniform(cfg.get("spawn_gap_min", 16.0), cfg.get("spawn_gap_max", 26.0))
+    if cfg.get("floor_is_lava", False) or cfg.get("mode_type") == "floor_is_lava":
+        base = rng.uniform(12.0, 16.0)
+    else:
+        base = rng.uniform(cfg.get("spawn_gap_min", 16.0), cfg.get("spawn_gap_max", 26.0))
     start = max(1.0, cfg.get("start_speed", 15.0))
     return base * max(1.0, (speed / start) ** 0.5)

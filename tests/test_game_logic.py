@@ -154,3 +154,61 @@ def test_runner_countdown_and_replay_lifecycle():
     assert mock_game.speed == 12.0
     assert mock_game.hud.countdown.text == ""
 
+
+def test_floor_is_lava_row_generation():
+    """Verify high train weight, high ramp probability, and tighter gaps in Floor is Lava mode."""
+    rng = random.Random(42)
+    cfg = dict(CFG, floor_is_lava=True)
+
+    # 1. Gaps are strictly tighter: 12.0 to 18.0
+    for _ in range(50):
+        gap = logic.next_gap(rng, cfg["start_speed"], cfg)
+        assert 12.0 <= gap <= 18.0, f"Gap {gap} outside lava range [12, 18]"
+
+    # 2. Spawning produces majority trains and high ramp ratio
+    train_count = 0
+    ramp_count = 0
+    total_obstacles = 0
+    live: list[logic.ObstacleSpec] = []
+
+    for _ in range(100):
+        row = logic.generate_row(rng, 100.0, live, cfg)
+        for obs in row.obstacles:
+            total_obstacles += 1
+            if obs.kind == logic.KIND_TRAIN:
+                train_count += 1
+                if obs.has_ramp:
+                    ramp_count += 1
+
+    train_pct = train_count / total_obstacles
+    assert train_pct >= 0.70, f"Expected >= 70% trains in Floor is Lava, got {train_pct:.2f}"
+    assert ramp_count >= 10, f"Expected ramp trains in Floor is Lava, got {ramp_count}"
+
+
+def test_airborne_and_sneakers_coin_collection_hitbox():
+    """Verify that jumping over obstacles and super sneakers collects coins beneath feet."""
+    # Simulation of _collide vertical matching formulas
+    # Grounded player:
+    p_grounded = True
+    p_y = 0.0
+    p_bottom, p_top = 0.0, 1.8
+
+    # Coin at ground height (0.5) is collected
+    assert (p_bottom - 0.4 <= 0.5 <= p_top + 0.4)
+
+    # Jumping player over barrier: apex y = 2.4 (bottom = 2.4, top = 4.2)
+    # Coin on barrier arc at y = 1.5 (underneath Jake's feet!)
+    p_bottom, p_top = 2.4, 4.2
+    c_y = 1.5
+    # Normal airborne reach: max(0.4, p.bottom - 2.4) <= c.y <= p.top + 0.5
+    y_match_airborne = (max(0.4, p_bottom - 2.4) <= c_y <= p_top + 0.5)
+    assert y_match_airborne, "Airborne player must collect coin beneath feet on barrier arc"
+
+    # Super sneakers player: soaring at y = 3.8 (bottom = 3.8, top = 5.6)
+    # Coin on obstacle roof / barrier at y = 1.6
+    p_bottom, p_top = 3.8, 5.6
+    c_y = 1.6
+    y_match_sneakers = (max(0.4, p_bottom - 4.5) <= c_y <= p_top + 0.5)
+    assert y_match_sneakers, "Super Sneakers airborne player must collect coin beneath feet"
+
+

@@ -344,3 +344,26 @@ def test_pickup_visual_cue_animation():
     # After full lifetime
     expired = cue.tick(dt=1.0)
     assert expired is True
+
+
+def test_lava_train_highway_continuity():
+    """Verify that spawn_lava_train_highway creates continuous, unbroken roof coverage from z=6 to >160."""
+    from game import logic
+    cfg = {"lane_width": 2.2, "moving_train_extra_speed": 4.0}
+    manager = ObstacleManager(cfg=cfg, seed=42)
+
+    manager.spawn_lava_train_highway()
+    assert len(manager.obstacles) >= 7
+    assert len(manager.coins) >= 20
+
+    # All obstacles must be static trains with ramps
+    for o in manager.obstacles:
+        assert o.spec.kind == logic.KIND_TRAIN
+        assert o.spec.has_ramp is True
+        assert o.spec.moving is False
+
+    # Check continuous rooftop coverage at every meter from z=10 to z=160
+    for z_probe in range(10, 161, 2):
+        has_roof = any(o.spec.z_start <= z_probe <= o.spec.z_end for o in manager.obstacles)
+        assert has_roof, f"Gap in roof coverage at z={z_probe}m in Floor is Lava highway!"
+

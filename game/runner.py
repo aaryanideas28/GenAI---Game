@@ -301,7 +301,7 @@ class Game(Entity):
                 self.player.set_sneakers_active(True)
             if hasattr(self.player, "cfg") and isinstance(self.player.cfg, dict):
                 self.player.cfg["jump_velocity"] = 22.5
-                self.player.cfg["gravity"] = self.base_gravity
+                self.player.cfg["gravity"] = getattr(self, "base_gravity", 55.0)
             self.hud.show_toast("[SNEAKERS] SUPER JUMP ACTIVE!" if not is_stacked else "[SNEAKERS] EXTENDED!", 2.5)
         elif kind == POWERUP_MULTIPLIER:
             self.powerup_timers[POWERUP_MULTIPLIER] = self.powerup_timers.get(POWERUP_MULTIPLIER, 0.0) + 12.0 if is_stacked else 12.0
@@ -374,6 +374,22 @@ class Game(Entity):
     def apply_package(self, package: BehavioralLogicPackage, guardrail_result: Any = None) -> None:
         """Applies a synthesized BehavioralLogicPackage and notifies the user via HUD."""
         self.rule_executor.set_package(package)
+        is_lava = (package.mode_type == "floor_is_lava")
+        self.cfg["floor_is_lava"] = is_lava
+        self.cfg["mode_type"] = package.mode_type
+        if is_lava and self.state == STATE_PLAYING:
+            has_train_ahead = any(
+                getattr(o, "spec", None) and o.spec.kind == logic.KIND_TRAIN and 0.0 <= o.spec.z_start <= 30.0
+                for o in getattr(self.obstacles, "obstacles", [])
+            )
+            if not has_train_ahead:
+                if hasattr(self.obstacles, "spawn_lava_train_highway"):
+                    self.obstacles.spawn_lava_train_highway()
+                elif hasattr(self.obstacles, "spawn_starter_ramp_train"):
+                    p_lane = getattr(self.player, "lane", 0)
+                    self.obstacles.spawn_starter_ramp_train(lane=p_lane, start_z=6.0, length=26.0)
+                    self.obstacles.until_next = 14.0
+
         if package.title in ("Prompt Blocked", "Prompt Blocked by Guardrail"):
             self.hud.show_toast(f"Guardrail: {package.summary}", 3.5)
             self.active_prompt_summary = "Vanilla / Default Rules"
@@ -551,8 +567,10 @@ class Game(Entity):
             self.player.set_magnet_active(False)
         self._jetpack_descending = False
         if hasattr(self.player, "cfg") and isinstance(self.player.cfg, dict):
-            self.player.cfg["jump_velocity"] = self.base_jump_velocity
-            self.player.cfg["gravity"] = self.base_gravity
+            base_jv = getattr(self, "base_jump_velocity", self.cfg.get("jump_velocity", 15.0) if hasattr(self, "cfg") else 15.0)
+            base_gv = getattr(self, "base_gravity", self.cfg.get("gravity", 55.0) if hasattr(self, "cfg") else 55.0)
+            self.player.cfg["jump_velocity"] = base_jv
+            self.player.cfg["gravity"] = base_gv
         self.state = STATE_COUNTDOWN
         self.state_time = 0.0
         self.hud.center.text = ""
@@ -575,6 +593,16 @@ class Game(Entity):
         self.hud.center.text = ""
         self.hud.sub.text = ""
         self.hud.countdown.text = ""
+        is_lava = bool(
+            self.cfg.get("floor_is_lava", False) or
+            (getattr(self, "rule_executor", None) and getattr(self.rule_executor, "package", None) and getattr(self.rule_executor.package, "mode_type", "") == "floor_is_lava")
+        )
+        if is_lava:
+            if hasattr(self.obstacles, "spawn_lava_train_highway"):
+                self.obstacles.spawn_lava_train_highway()
+            elif hasattr(self.obstacles, "spawn_starter_ramp_train"):
+                self.obstacles.spawn_starter_ramp_train(lane=0, start_z=6.0, length=26.0)
+                self.obstacles.until_next = 14.0
 
     def restart_run(self) -> None:
         """Replay from game-over: restarts immediately from original position without recalibration or countdown."""
@@ -607,8 +635,10 @@ class Game(Entity):
             self.player.set_magnet_active(False)
         self._jetpack_descending = False
         if hasattr(self.player, "cfg") and isinstance(self.player.cfg, dict):
-            self.player.cfg["jump_velocity"] = self.base_jump_velocity
-            self.player.cfg["gravity"] = self.base_gravity
+            base_jv = getattr(self, "base_jump_velocity", self.cfg.get("jump_velocity", 15.0) if hasattr(self, "cfg") else 15.0)
+            base_gv = getattr(self, "base_gravity", self.cfg.get("gravity", 55.0) if hasattr(self, "cfg") else 55.0)
+            self.player.cfg["jump_velocity"] = base_jv
+            self.player.cfg["gravity"] = base_gv
         self.state = STATE_PLAYING
         self.state_time = 0.0
         self.hud.center.text = ""
@@ -620,6 +650,17 @@ class Game(Entity):
             self.console.close()
         if hasattr(self, "leaderboard_modal") and self.leaderboard_modal and self.leaderboard_modal.is_active:
             self.leaderboard_modal.close()
+
+        is_lava = bool(
+            self.cfg.get("floor_is_lava", False) or
+            (getattr(self, "rule_executor", None) and getattr(self.rule_executor, "package", None) and getattr(self.rule_executor.package, "mode_type", "") == "floor_is_lava")
+        )
+        if is_lava:
+            if hasattr(self.obstacles, "spawn_lava_train_highway"):
+                self.obstacles.spawn_lava_train_highway()
+            elif hasattr(self.obstacles, "spawn_starter_ramp_train"):
+                self.obstacles.spawn_starter_ramp_train(lane=0, start_z=6.0, length=26.0)
+                self.obstacles.until_next = 14.0
         if hasattr(self.hud, "powerup_hud_badges"):
             self.hud.powerup_hud_badges.clear()
         if hasattr(self.hud, "powerup_badge"):
@@ -656,8 +697,10 @@ class Game(Entity):
             self.player.set_magnet_active(False)
         self._jetpack_descending = False
         if hasattr(self.player, "cfg") and isinstance(self.player.cfg, dict):
-            self.player.cfg["jump_velocity"] = self.base_jump_velocity
-            self.player.cfg["gravity"] = self.base_gravity
+            base_jv = getattr(self, "base_jump_velocity", self.cfg.get("jump_velocity", 15.0) if hasattr(self, "cfg") else 15.0)
+            base_gv = getattr(self, "base_gravity", self.cfg.get("gravity", 55.0) if hasattr(self, "cfg") else 55.0)
+            self.player.cfg["jump_velocity"] = base_jv
+            self.player.cfg["gravity"] = base_gv
         if hasattr(self.hud, "powerup_badge"):
             self.hud.powerup_badge.text = ""
         if hasattr(self.hud, "powerup_hud_badges"):
@@ -1125,6 +1168,16 @@ class Game(Entity):
             self.player.tick(dt, self.speed, support_y)
             self.inspector.tick(dt, self.speed, True)
             self._collide()
+            is_lava = bool(
+                self.cfg.get("floor_is_lava", False) or
+                (getattr(self, "rule_executor", None) and getattr(self.rule_executor, "package", None) and getattr(self.rule_executor.package, "mode_type", "") == "floor_is_lava")
+            )
+            if is_lava and self.state_time < 3.5:
+                if hasattr(self, "rule_executor") and hasattr(self.rule_executor, "state") and isinstance(self.rule_executor.state, dict):
+                    self.rule_executor.state["lava_timer"] = 0.0
+                rem = max(1, int(3.5 - self.state_time) + 1)
+                self.hud.show_toast(f"🔥 LAVA RISING IN {rem}... GET TO ROOF!", 0.25)
+
             self.rule_executor.trigger_event("on_tick", dt)
             self._emit_frame_event(dt)   # game_events on_frame hook
         elif self.state == STATE_COUNTDOWN:
@@ -1227,15 +1280,31 @@ class Game(Entity):
                         self.game_over()
                         return
 
+        # Swept Z-collision window preventing high-speed frame tunneling
+        z_window = max(1.2, min(2.4, getattr(self, "speed", 15.0) * 0.08))
+        has_sneakers = self.powerup_timers.get("sneakers", 0.0) > 0
+
         for c in list(self.obstacles.coins):
-            if abs(c.x - p.x) < 0.8 and abs(c.z) < 0.7 and p.bottom - 0.3 < c.y < p.top + 0.3:
-                coin_x, coin_z = c.x, c.z
-                self.coin_count += 1
-                self.obstacles.coins.remove(c)
-                from ursina import destroy
-                destroy(c)
-                self.rule_executor.trigger_event("on_coin_collect", payload={"coin_x": coin_x, "coin_z": coin_z})
-                self._emit_coin_event(coin_x, coin_z)   # game_events on_coin_collect hook
+            if abs(c.x - p.x) < 0.85 and abs(c.z) < z_window:
+                # Vertical reach check:
+                # Grounded: from feet (-0.4) to head (+0.4)
+                # Airborne: downward cylinder down to 0.4m (covering obstacles and coin arcs beneath Jake)
+                # Super Sneakers: downward reach extends down to 4.5m beneath feet
+                if p.grounded and p.y < 0.3:
+                    y_match = (p.bottom - 0.4 <= c.y <= p.top + 0.4)
+                elif has_sneakers:
+                    y_match = (max(0.4, p.bottom - 4.5) <= c.y <= p.top + 0.5)
+                else:
+                    y_match = (max(0.4, p.bottom - 2.4) <= c.y <= p.top + 0.5)
+
+                if y_match:
+                    coin_x, coin_z = c.x, c.z
+                    self.coin_count += 1
+                    self.obstacles.coins.remove(c)
+                    from ursina import destroy
+                    destroy(c)
+                    self.rule_executor.trigger_event("on_coin_collect", payload={"coin_x": coin_x, "coin_z": coin_z})
+                    self._emit_coin_event(coin_x, coin_z)   # game_events on_coin_collect hook
 
 
     def _update_camera(self, dt: float) -> None:

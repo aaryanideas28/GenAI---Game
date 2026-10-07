@@ -1,7 +1,7 @@
 {
   "version": "1.0",
-  "last_updated": "2026-10-07T09:03:23.983112+00:00",
-  "total_records": 51,
+  "last_updated": "2026-10-07T09:04:23.432215+00:00",
+  "total_records": 52,
   "entries": [
     {
       "entry_id": "RUN-1791270607622-f73e91",
@@ -1175,6 +1175,29 @@
       "verified": true,
       "verification_status": "VERIFIED",
       "checksum": "23f21bbe77792540dd151586ac23497c274e4698fe5057487dcc7510317b6a06"
+    },
+    {
+      "entry_id": "RUN-1791363863432-fbb705",
+      "student_name": "Jake",
+      "roll_number": "N/A",
+      "score": 797,
+      "coins": 34,
+      "distance": 458.0,
+      "powerups_collected": {
+        "jetpack": 0,
+        "magnet": 0,
+        "sneakers": 0,
+        "multiplier": 0,
+        "hoverboard": 0,
+        "shield": 0
+      },
+      "total_powerups": 0,
+      "active_prompt_summary": "Vanilla / Default Rules",
+      "board_type": "RANKED",
+      "timestamp": "2026-10-07T09:04:23.432215+00:00",
+      "verified": true,
+      "verification_status": "VERIFIED",
+      "checksum": "f74f785aa828cab84f9025d6600615150135ec88dba3f288c47a8f9dbde9ce65"
     }
   ]
 }

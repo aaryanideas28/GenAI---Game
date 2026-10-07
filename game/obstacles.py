@@ -418,6 +418,45 @@ class ObstacleManager:
         self.cues.clear()
         self.until_next = 40.0
 
+    def spawn_lava_train_highway(self) -> None:
+        """Pre-populates the entire track from z=6m to z=168m with a continuous,
+        staggered chain of ramp trains for Floor is Lava mode so the player is never stranded."""
+        # Staggered schedule ensuring overlapping Z windows across adjacent lanes:
+        # Every train has a ramp and guide coins.
+        highway_schedule = [
+            (0, 6.0, 30.0),      # Lane 0:  z=6.0 to 36.0
+            (1, 26.0, 32.0),     # Lane 1:  z=26.0 to 58.0  (overlaps Lane 0 by 10m)
+            (-1, 48.0, 32.0),    # Lane -1: z=48.0 to 80.0  (overlaps Lane 1 by 10m)
+            (0, 70.0, 32.0),     # Lane 0:  z=70.0 to 102.0 (overlaps Lane -1 by 10m)
+            (1, 92.0, 32.0),     # Lane 1:  z=92.0 to 124.0 (overlaps Lane 0 by 10m)
+            (-1, 114.0, 32.0),   # Lane -1: z=114.0 to 146.0(overlaps Lane 1 by 10m)
+            (0, 136.0, 34.0),    # Lane 0:  z=136.0 to 170.0(overlaps Lane -1 by 10m, reaches dynamic spawner)
+        ]
+        for lane, z_start, length in highway_schedule:
+            spec = logic.ObstacleSpec(
+                kind=logic.KIND_TRAIN,
+                lane=lane,
+                z_start=z_start,
+                length=length,
+                moving=False,
+                has_ramp=True,
+            )
+            self.obstacles.append(ObstacleEntity(spec, self.cfg, self.rng))
+            # Ramp ascent guidance coins
+            for step in range(5):
+                cz = z_start + step * 2.2
+                cy = min(3.8, 1.0 + step * 0.55)
+                self.coins.append(Coin(logic.CoinSpec(lane, cz, cy), self.cfg))
+            # Roof coins
+            for step in range(4):
+                cz = z_start + 12.0 + step * 2.5
+                self.coins.append(Coin(logic.CoinSpec(lane, cz, 3.8), self.cfg))
+        self.until_next = 12.0
+
+    def spawn_starter_ramp_train(self, lane: int = 0, start_z: float = 6.0, length: float = 26.0) -> None:
+        """Spawns starter highway chain for Floor is Lava mode."""
+        self.spawn_lava_train_highway()
+
     def spawn_pickup_cue(self, position, kind: str) -> None:
         """Spawns an expanding 3D visual cue and audio feedback upon token pickup."""
         cue = PickupVisualCue(position=position, kind=kind)
